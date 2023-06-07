@@ -1,0 +1,256 @@
+---
+title: "Fc7 abundance"
+---
+```{r, message=FALSE}
+library(phyloseq)
+library(ggplot2)
+library(dplyr)
+library(microshades)
+```
+
+```{r, message=FALSE}
+# seed and pathways
+set.seed(3003)
+filepath = "C:/Users/madel/OneDrive - NTNU/Doktorgrad/Project 8 Phage therapy and AB in semi-cont/R-analysis/GitHubScripts"
+filepath_results = paste0(filepath, "/results/", Sys.Date(), "_")
+filepath_figures = paste0(filepath, "/figures/",  Sys.Date(), "_")
+
+base::source(paste0(filepath, "/plot.settings_waterphage.R"))
+source(paste0(filepath, "/conf_boxplot.R"))
+source(paste0(filepath, "/ps_melt2.R"))
+
+normalised = readRDS(file = paste0(filepath,"/rawdata/2023-02-02_Phyloseq_object_scaled-rarified-26447_16SrDNA.RDS"))
+normalised = phyloseq::subset_samples(normalised, !Sample_name %in% c("JW-1-D-0", "JW-2-D-0"))
+ab_ab = readRDS(paste0(filepath, "/rawdata/2023-02-02_Phyloseq_absolute_abundance_16SrDNA_wo-controls.RDS"))
+```
+
+```{r, message=FALSE}
+# Use microshades function prep_mdf to agglomerate, normalize, and melt the phyloseq object
+mdf_rel <- prep_mdf(normalised, subgroup_level = "ASV")
+#Absolute abundance
+mdf_abs <- prep_mdf2(ab_ab, subgroup_level = "ASV")
+#Combinding 
+mdf_rel$type = "Relative_abundance"
+mdf_abs$type = "Absolute_abundance"
+mdf_norm_both = bind_rows(mdf_rel, mdf_abs) %>% 
+  dplyr::mutate(type = factor(type, 
+                              levels = c("Relative_abundance",
+                                         "Absolute_abundance")), 
+                Treatment = case_when(Treatment == "AB"~"A", 
+                                      Treatment == "Phage"~"P", 
+                                      Treatment == "None"~"N")) %>% 
+  dplyr::mutate(Treatment = factor(Treatment, levels = c("N", "P", "A")))
+```
+
+```{r}
+Fc7 = mdf_norm_both %>% filter(OTU == "Zotu1", Added_Fc7 != "No") %>% 
+  dplyr::mutate(density = case_when(type == "Absolute_abundance" ~ density_cells_mL)) %>%
+    dplyr::mutate(Added_Fc7 = case_when(Added_Fc7 == "No" ~ "No-Fc7", 
+                                      Added_Fc7 == "Low" ~ "Low-Fc7", 
+                                      Added_Fc7 == "High" ~ "High-Fc7")) %>%
+  mutate(Added_Fc7 = factor(Added_Fc7, levels = c("No-Fc7", "Low-Fc7", "High-Fc7" ))) 
+```
+
+#Plot
+```{r}
+Fc7 %>%
+  filter(type == "Absolute_abundance") %>%
+  ggplot(aes(x = Sample_name, y = Abundance)) + 
+  geom_bar(stat = "identity", fill = "grey88", color = "black") + 
+  scale_y_continuous(labels = scales::unit_format(unit = "", scale = 1 / 1e+06, digits = 2)) +
+  my.theme + 
+  theme(legend.position = "none",
+        text=element_text(size=10), 
+        axis.text.x = element_blank() , 
+        axis.ticks.x = element_blank(), 
+        axis.title.x = element_blank(), 
+        strip.text= element_text(size = 8),
+        panel.spacing.x = unit(0, "lines"), 
+        panel.grid.major.x = element_blank()
+        ) + 
+  ggh4x::facet_nested(~ Added_Fc7+DPI+Treatment, 
+                      scales = "free", space = "free_x", switch = "both") + 
+  geom_point(aes(x=Sample_name, y = density), size = 0.5) +   
+  coord_cartesian(expand = FALSE) +
+  labs(y = expression(paste("Fc7 absolute abundance")))
+
+ggsave(filename = paste0(filepath_figures, "Figure2_Fc7-absolute-abundance.pdf"), width = 180, height = 70, units = "mm")
+```
+
+
+## Statistical differences between groups
+### Difference between treatment groups at 1 DPI
+```{r}
+Fc7 %>% 
+  dplyr::filter(DPI == 1, Added_Fc7 != "No", type == "Absolute_abundance") %>% #abundance in no is neglisable and not of interest
+  dplyr::select(Sample_name,Added_Fc7, Treatment, Abundance, DPI) %>%
+  dplyr::group_by(Added_Fc7, Treatment)   %>% 
+  rstatix::shapiro_test(Abundance) 
+#normally distributed (p>0.05) for all except phage low (p = 0.03)
+```
+Because one groups is not normally distributed we will use the Wilcoxon t-test. 
+```{r}
+Fc7_extraction = Fc7 %>%
+  filter(Added_Fc7 != "No", DPI == 1) %>%
+  select(Sample_name, type, Extraction,Added_Fc7, Treatment, Abundance, DPI) %>%   
+  tidyr::spread(value = Abundance, key = type) %>% 
+  dplyr::group_by(Added_Fc7, Treatment)
+```
+
+```{r}
+Fc7 %>%
+  ggplot(aes(x=DPI, y = Abundance, color = Treatment)) + 
+  my.theme + 
+  stat_summary(fun.data = conf2, 
+               #position = position_dodge(width = 0.9),
+               color = "black", 
+               aes(fill = Treatment, group = interaction(DPI, Treatment)), 
+               geom = "boxplot", 
+               alpha = 0.5, 
+               show.legend = T) + 
+  facet_grid(type~Added_Fc7, scales = "free")
+```
+
+#Fc7 0 dpi
+```{r}
+options(scipen = 999)
+Fc7 %>% 
+  dplyr::filter(DPI == 0) %>%
+  group_by(type, Added_Fc7, Treatment) %>% 
+  summarise(mean = mean(Abundance), sd = sd(Abundance)*100)
+```
+
+# Statistics 1 dpi
+## Relative
+```{r}
+set.seed(3003)
+kruskal.test(Relative_abundance ~ Treatment, data = Fc7_extraction %>% filter(Added_Fc7 == "Low") )
+#Kruskal-Wallis chi-squared = 2.9657, df = 2, p-value = 0.227
+
+df_low = Fc7_extraction %>% filter(Added_Fc7 == "Low") 
+pairwise.wilcox.test(df_low$Relative_abundance, df_low$Treatment, p.adjust.method = "BH")
+#  N    P   
+#P 0.33 -   
+#A 0.56 0.56
+
+set.seed(3003)
+kruskal.test(Relative_abundance ~ Treatment, data = Fc7_extraction %>% filter(Added_Fc7 == "High") )
+#Kruskal-Wallis chi-squared = 4.38, df = 2, p-value = 0.1119
+
+df_high = Fc7_extraction %>% filter(Added_Fc7 == "High") 
+pairwise.wilcox.test(df_high$Relative_abundance, df_high$Treatment, p.adjust.method = "BH")
+#N    P   
+#P 0.14 -   
+#A 0.84 0.14
+```
+
+## Absolute
+```{r}
+set.seed(3003)
+kruskal.test(Absolute_abundance ~ Treatment, data = Fc7_extraction %>% filter(Added_Fc7 == "Low") )
+#Kruskal-Wallis chi-squared = 8.456, df = 2, p-value = 0.01458
+
+df_low = Fc7_extraction %>% filter(Added_Fc7 == "Low") 
+pairwise.wilcox.test(df_low$Absolute_abundance, df_low$Treatment, p.adjust.method = "BH")
+#  N     P    
+#P 0.043 -    
+#A 0.286 0.043
+
+set.seed(3003)
+kruskal.test(Absolute_abundance ~ Treatment, data = Fc7_extraction %>% filter(Added_Fc7 == "High") )
+#Kruskal-Wallis chi-squared =11.18, df = 2, p-value = 0.003735
+
+df_high = Fc7_extraction %>% filter(Added_Fc7 == "High") 
+pairwise.wilcox.test(df_high$Absolute_abundance, df_high$Treatment, p.adjust.method = "BH")
+#  N     P    
+#P 0.012 -    
+#A 0.012 0.056
+```
+
+```{r}
+#average drop in density 1 DPI
+mean = Fc7_extraction %>% 
+  ungroup() %>% 
+  na.omit() %>%
+  dplyr::filter(Added_Fc7 == "Low" )  %>% 
+  dplyr::group_by(Added_Fc7, Treatment) %>% 
+  dplyr::summarise(mean_ab = mean(Absolute_abundance)) 
+
+mean %>%
+  dplyr::mutate(control = mean %>% dplyr::filter(Treatment == "N") %>% dplyr::pull(mean_ab) ) %>%
+  dplyr::mutate(ratio = mean_ab/control, 
+                percent = ((mean_ab-control)/control)*100    ) 
+
+mean = Fc7_extraction %>% 
+  ungroup() %>% 
+  na.omit() %>%
+  dplyr::filter(Added_Fc7 == "High" )  %>% 
+  dplyr::group_by(Added_Fc7, Treatment) %>% 
+  dplyr::summarise(mean_ab = mean(Absolute_abundance)) 
+
+mean %>%
+  dplyr::mutate(control = mean %>% dplyr::filter(Treatment == "N") %>% dplyr::pull(mean_ab) ) %>%
+  dplyr::mutate(ratio = mean_ab/control, 
+                percent = ((mean_ab-control)/control)*100    )
+```
+
+# Statistics 7 DPI
+```{r}
+Fc7 %>% 
+  dplyr::filter(DPI == 7, Added_Fc7 != "No") %>% #abundance in no is neglisable and not of interest
+  dplyr::select(Sample_name,Added_Fc7, Treatment, Abundance, DPI, type) %>%
+  dplyr::group_by(Added_Fc7, Treatment, type)   %>% 
+  rstatix::shapiro_test(Abundance) 
+#normally distributed (p>0.05) for all except phage low (p = 0.03)
+```
+Because one groups is not normally distributed we will use the Wilcoxon t-test. 
+```{r}
+Fc7_extraction_d7 = Fc7 %>%
+  filter(Added_Fc7 != "No", DPI == 7) %>%
+  select(Sample_name, type, Extraction,Added_Fc7, Treatment, Abundance, DPI) %>%   
+  tidyr::spread(value = Abundance, key = type) %>% 
+  dplyr::group_by(Added_Fc7, Treatment)
+```
+
+## Relative
+```{r}
+set.seed(3003)
+kruskal.test(Relative_abundance ~ Treatment, data = Fc7_extraction_d7 %>% filter(Added_Fc7 == "Low") )
+#Kruskal-Wallis chi-squared = 9.98, df = 2, p-value = 0.006806
+
+df_low = Fc7_extraction_d7 %>% filter(Added_Fc7 == "Low") 
+pairwise.wilcox.test(df_low$Relative_abundance, df_low$Treatment, p.adjust.method = "BH")
+#  N     P    
+#P 0.310 -    
+#A 0.012 0.012
+set.seed(3003)
+kruskal.test(Relative_abundance ~ Treatment, data = Fc7_extraction_d7 %>% filter(Added_Fc7 == "High") )
+#Kruskal-Wallis chi-squared = 8.24, df = 2, p-value = 0.01624
+df_high = Fc7_extraction_d7 %>% filter(Added_Fc7 == "High") 
+pairwise.wilcox.test(df_high$Relative_abundance, df_high$Treatment, p.adjust.method = "BH")
+#  N     P    
+#P 0.310 -    
+#A 0.083 0.024
+```
+
+## Absolute
+```{r}
+set.seed(3003)
+kruskal.test(Absolute_abundance ~ Treatment, data = Fc7_extraction_d7 %>% filter(Added_Fc7 == "Low") )
+#Kruskal-Wallis chi-squared = 2.34, df = 2, p-value = 0.3104
+df_low = Fc7_extraction_d7 %>% filter(Added_Fc7 == "Low") 
+pairwise.wilcox.test(df_low$Absolute_abundance, df_low$Treatment, p.adjust.method = "BH")
+#  N    P   
+#P 0.45 -   
+#A 0.84 0.63
+set.seed(3003)
+kruskal.test(Absolute_abundance ~ Treatment, data = Fc7_extraction_d7 %>% filter(Added_Fc7 == "High") )
+#Kruskal-Wallis chi-squared = 7, df = 2, p-value = 0.0302
+df_high = Fc7_extraction_d7 %>% filter(Added_Fc7 == "High") 
+pairwise.wilcox.test(df_high$Absolute_abundance, df_high$Treatment, p.adjust.method = "BH")
+#  N     P    
+#P 0.111 -    
+#A 0.111 0.095
+```
+
+

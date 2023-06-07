@@ -1,0 +1,109 @@
+---
+title: "Alpha diversity plots and calculations"
+---
+
+#Package and load data
+```{r, message=FALSE}
+library(phyloseq)
+library(ggplot2)
+library(dplyr)
+library(GGally)
+```
+
+```{r}
+filepath = "C:/Users/madel/OneDrive - NTNU/Doktorgrad/Project 8 Phage therapy and AB in semi-cont/R-analysis/GitHubScripts"
+filepath_results = paste0(filepath, "/results/", Sys.Date(), "_")
+filepath_figures = paste0(filepath, "/figures/",  Sys.Date(), "_")
+
+source(paste0(filepath, "/plot.settings_waterphage.R"))
+```
+
+# Calculate alpha diversity and marginal mean estimates
+```{r}
+normalised = readRDS(file = paste0(filepath,"/rawdata/2023-02-02_Phyloseq_object_scaled-rarified-26447_16SrDNA.RDS"))
+alpha_div = data.frame(sample_data(normalised),
+                        richness = vegan::renyi(t(as.data.frame(normalised@otu_table)), scales = c(0), hill = TRUE),
+                        order1 = vegan::renyi(t(as.data.frame(normalised@otu_table)), scales = c(1), hill = TRUE),
+                        order2 = vegan::renyi(t(as.data.frame(normalised@otu_table)), scales = c(2), hill = TRUE)) %>%
+  mutate(eveness = order1/richness) %>% 
+  dplyr::mutate(Added_Fc7 = case_when(Added_Fc7 == "No" ~ "No-Fc7", 
+                                      Added_Fc7 == "Low" ~ "Low-Fc7", 
+                                      Added_Fc7 == "High" ~ "High-Fc7")) %>%
+  mutate(Added_Fc7 = factor(Added_Fc7, levels = c("No-Fc7", "Low-Fc7", "High-Fc7" ))) 
+
+alpha_df_estimates = readRDS(file = paste0(filepath, "/results/2023-02-03_16SrDNA_ASVrichness_emmip_estimates.RDS"))
+alpha_df_estimates = alpha_df_estimates %>%  
+  dplyr::mutate(Added_Fc7 = case_when(Added_Fc7 == "No" ~ "No-Fc7", 
+                                      Added_Fc7 == "Low" ~ "Low-Fc7", 
+                                      Added_Fc7 == "High" ~ "High-Fc7")) %>%
+  mutate(Added_Fc7 = factor(Added_Fc7, levels = c("No-Fc7", "Low-Fc7", "High-Fc7" ))) 
+```
+
+# Calculations
+## D7 richness
+```{r}
+alpha_div %>% 
+  dplyr::filter(DPI == 7) %>% 
+  group_by(Treatment, Added_Fc7) %>% 
+  dplyr::summarise(n=n(), av_ri =mean(richness), sd = sd(richness) ) %>%
+  dplyr::filter(Treatment != "Phage")
+#AB/control richness
+#no
+514.0/785.0	#[1] 0.6547771
+#low
+635.2/1022.8#[1] 0.6210403
+#high
+394.4/1018.8	#[1] 0.3871221
+```
+
+```{r}
+alpha_div %>% 
+  dplyr::filter(DPI == 3, Added_Fc7 == "High") %>% 
+  group_by(Treatment, Added_Fc7) %>% 
+  dplyr::summarise(n=n(), av_ri =mean(richness), sd = sd(richness) ) 
+1270.8/1132.4 #1.122218
+```
+
+# Plots 
+```{r}
+alpha_df_estimates %>%
+  ggplot(aes(y = richness, x = DPI, color = Treatment)) + 
+  
+  geom_ribbon(aes(ymax=UCL, ymin=LCL, fill=Treatment), alpha=0.4) +
+  my.theme + 
+  scale_fill_manual(values = treatment_cols1, labels = c("None","Phage", "AB")) + 
+  scale_color_manual(values = treatment_cols1, labels = c("None","Phage", "AB")) + 
+  scale_shape_manual(values = c(21,24,25), labels = c("None","Phage", "AB")) +
+  facet_grid(~Added_Fc7, scales = "free_y") +
+  geom_point(data = alpha_div, aes(x=DPI, y = richness , fill = Treatment,  shape = Treatment) , 
+             color = "black", size = 3)  + 
+  ylab("ASV richness")
+
+ggsave(filename = paste0(filepath_figures, "Figure4_16SrDNA_ASV_richness.svg"), width = 180, height = 80, units = "mm")
+```
+
+# Supplementary figure dept + diversity each group
+```{r, warning=FALSE}
+alpha_div %>% 
+  dplyr::select(Sample_name, Extraction, DPI, 
+                Added_Fc7, Treatment, depth, richness, order1, order2, eveness) %>%
+  dplyr::rename(N1 = order1, N2 = order2, "Richness\n(N0)" = richness, "Evenness\n (N1/N0)" = eveness, Depth = depth)  %>% 
+  reshape2::melt(id = c(1:5), variable.name = "Order", value.name = "Diversity" ) %>%
+  
+  ggplot2::ggplot(aes(x=DPI, y = Diversity, color = Treatment, shape = Treatment, fill = Treatment)) + 
+  
+  my.theme +
+  facet_grid(Order~ Added_Fc7, switch = "y", scales = "free_y", ) + 
+  geom_smooth(method = "loess",se =  F, formula = y~x) + 
+  geom_point(color = "Black") + 
+  scale_color_manual(values = treatment_cols1) + 
+  scale_fill_manual(values = treatment_cols1) + 
+  scale_shape_manual(values = c(21,22,23)) +
+  theme(strip.background = element_rect(color="transparent", fill="transparent", linetype="solid", size = 1), 
+        strip.text.y.left  = element_text(angle = 0), 
+        strip.placement = "outside", 
+        axis.title.y = element_blank())  
+
+ggsave(filename = paste0(filepath_figures, "SF1_16SrDNA_Alpha-diversity-over-time.png"), width = 180, height = 120, units = "mm")
+```
+

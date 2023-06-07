@@ -1,0 +1,115 @@
+---
+title: "3b Density plots"
+---
+```{r, message=FALSE}
+library(ggplot2)
+library(dplyr)
+
+filepath = "C:/Users/madel/OneDrive - NTNU/Doktorgrad/Project 8 Phage therapy and AB in semi-cont/R-analysis/GitHubScripts"
+filepath_results = paste0(filepath, "/results/", Sys.Date(), "_")
+filepath_figures = paste0(filepath, "/figures/",  Sys.Date(), "_")
+source(paste0(filepath, "/plot.settings_waterphage.R"))
+source(paste0(filepath, "/conf_boxplot.R"))
+
+#load data
+#bacterial density
+flow_density = read.csv(file = paste0(filepath, "/results/2022-11-30_bacterial_density_flow_cyt_clean_nooutliers.csv")) 
+bacterial_density = flow_density %>%
+  filter(Gate == "Bacteria") %>%
+  dplyr::mutate(Treatment = dplyr::case_when(Treatment == "none" ~ "None", 
+                                             TRUE ~ Treatment)) %>%
+  dplyr::mutate(Added_Fc7 = case_when(Added_Fc7 == "no" ~ "No-Fc7", 
+                                      Added_Fc7 == "low" ~ "Low-Fc7", 
+                                      Added_Fc7 == "high" ~ "High-Fc7")) %>%
+  dplyr::mutate(Added_Fc7 = factor(Added_Fc7, levels = c("No-Fc7", "Low-Fc7", "High-Fc7" )), 
+                Treatment = factor(Treatment, levels = c("None", "Phage", "AB")) , 
+                T = factor(T, levels = c("C", "P", "A")) ) 
+  
+#marginal mean estimates
+flow_model_estimate = readRDS(paste0(filepath, "/results/2022-12-31_density_estimate_plot.RDS"))
+flow_model_estimate = flow_model_estimate %>% mutate(Treatment = as.character(Treatment)) %>%
+  dplyr::mutate(Treatment = dplyr::case_when(Treatment == "none" ~ "None", TRUE ~ Treatment)) %>%
+  dplyr::mutate(Added_Fc7 = case_when(Added_Fc7 == "no" ~ "No-Fc7", 
+                                      Added_Fc7 == "low" ~ "Low-Fc7", 
+                                      Added_Fc7 == "high" ~ "High-Fc7")) %>%
+  mutate(Treatment = factor(Treatment, levels = c("None", "Phage", "AB")) , 
+         Added_Fc7 = factor(Added_Fc7, levels = c("No-Fc7", "Low-Fc7", "High-Fc7" ))) 
+  
+```
+
+# Plots
+```{r}
+density =
+  flow_model_estimate %>% 
+  ggplot(aes(y = density_cells_mL, x = DPI, color = Treatment)) + 
+  
+  geom_ribbon(aes(ymax=UCL, ymin=LCL, fill=Treatment), alpha=0.4) +
+  my.theme + 
+  scale_fill_manual(values = treatment_cols1, labels = c("None","Phage", "AB")) + 
+  scale_color_manual(values = treatment_cols1, labels = c("None","Phage", "AB")) + 
+  scale_shape_manual(values = c(21,24,25), labels = c("None","Phage", "AB")) +
+  facet_grid(~Added_Fc7) +
+  geom_point(data = bacterial_density, aes(x=DPI, y = (density_cells_mL), 
+                                           fill = Treatment,  shape = Treatment) , 
+             color = "black", size = 2) + 
+  scale_y_continuous( trans = "log10",breaks = c(300000, 500000, 700000, 1000000, 1500000),  
+                     labels = scales::unit_format(unit = "", scale = 1 / 1e+06, digits = 2)) + 
+  labs(y = expression(paste("Bacterial density (", 10^6, "cells/mL)")))
+```
+
+## Day 7 - final sampling day 
+```{r}
+d7_plot =
+bacterial_density %>%
+  filter(DPI == 7) %>% 
+  ggplot2::ggplot(aes(x  = Treatment, y = density_cells_mL, fill = Treatment, color = Treatment, 
+                      shape = Treatment)) + 
+my.theme + 
+   scale_y_continuous( trans = "log10",breaks = c(300000, 500000, 700000, 1000000, 1500000),  
+                     labels = scales::unit_format(unit = "", scale = 1 / 1e+06, digits = 2)) + 
+  labs(y = expression(paste("Bacterial density (", 10^6, "cells/mL)"))) + 
+  
+  scale_fill_manual(values = treatment_cols1) + 
+  scale_color_manual(values = treatment_cols1) + 
+  scale_shape_manual(values = c(21,24,25), labels = c("None","Phage", "AB")) +
+  theme(axis.text.x = element_text(angle = 50, hjust = 0.8, vjust = 1), 
+        axis.title.x = element_blank(), 
+        strip.text = element_text(size = 9)) + 
+  facet_grid(~Added_Fc7) + 
+  stat_summary(fun.data = conf3, 
+               position = position_dodge(width = 0.9),
+               color = "black", 
+               aes(fill = Treatment), 
+               geom = "boxplot", 
+               alpha = 0.5, 
+               show.legend = FALSE) + 
+  geom_point(size = 2, color ="black")
+```
+
+## Combined plot
+```{r}
+ggpubr::ggarrange(density, d7_plot, common.legend = T, legend = "right", widths = c(1.5,1), labels = c("a)", "b)"))
+ggplot2::ggsave(filename = paste0(filepath_figures, "figure3_density_plot.svg"), width = 180, height = 70, units = "mm")
+```
+
+
+#D7 averages
+```{r}
+bacterial_density %>%
+  filter(DPI == 7) %>% 
+  group_by(Group) %>% 
+  summarise(mean = mean(density_cells_mL))
+
+(904367.6-651072.0)/651072.0*100
+#38.90439 % increase in density
+904367.6-651072.0	
+
+bacterial_density  %>% 
+  filter(PP == "H") %>% 
+  group_by(Group, DPI) %>% 
+  summarise(mean = mean(density_cells_mL)) %>% View()
+```
+
+
+
+

@@ -1,0 +1,296 @@
+---
+title: "Analysing Differential absolute abundance results"
+---
+```{r, message=FALSE}
+library(ggplot2)
+library(dplyr)
+library(phyloseq)
+library(tidyr)
+```
+
+```{r}
+filepath = "C:/Users/madel/OneDrive - NTNU/Doktorgrad/Project 8 Phage therapy and AB in semi-cont/R-analysis/GitHubScripts"
+filepath_results = paste0(filepath, "/results/", Sys.Date(), "_")
+filepath_figures = paste0(filepath, "/figures/",  Sys.Date(), "_")
+source(paste0(filepath, "/plot.settings_waterphage.R"))
+source(paste0(filepath, "/ps_melt2.R"))
+options(scipen=999)
+```
+
+```{r, message=FALSE}
+d7 = readRDS(file = paste0(filepath, "/results/2023-02-14_Phyloseq_absolute_abundance_16SrDNA_7DPI-filtered-1508ASVs.RDS"))
+```
+
+# Load results
+```{r, message=FALSE}
+corncob = readRDS(file = paste0(filepath, "/results/2023-02-14_Corncob_list-results_ASV_DNA_absolute_1508.RDS") ) 
+corncob = corncob$df_results
+#all taxa in corncob are significant. Clean up data 
+corncob = corncob %>% select(Treatment, Added_Fc7, #treatment is in contrast to none
+                   ASV, Genus, Class, Order, Family) %>% 
+  mutate(method = "corncob", abundance = "Absolute")
+
+ancombc2 = readRDS(file = paste0(filepath, "/results/2023-02-14_ANCOMBC_result_pairwize-organised_ASV_DNA_absolute_1508.RDS"))
+ancombc2 = ancombc2 %>% 
+  tidyr::separate(comparison, sep = "_",
+           into =  c("Added_Fc7" , "d")) %>% 
+  tidyr::separate(d, sep = " ", into = c("delete", "Treatment", "delete2", "delete3")) %>% 
+ select(Treatment, Added_Fc7, #treatment is in contrast to none
+                   ASV, Genus, Class, Order, Family) %>% 
+  mutate(method = "ancombc2", abundance = "Absolute")
+
+deseq2 = read.csv(file = paste0(filepath, "/results/2023-02-14_DeSeq_result-dataframe_ASV_DNA_absolute_1508.csv"))
+deseq2 = deseq2 %>% filter(padj<0.05) %>% 
+  select(Extraction, Treatment, Added_Fc7, #treatment is in contrast to none
+                   ASV, Genus, Class, Order, Family)%>% 
+  mutate(method = "DeSeq2", abundance = "Absolute")
+
+DA_taxa = bind_rows(corncob, ancombc2, deseq2)
+#only want to keep taxa identified in all tree methods. Filter based on group level. 
+DA_taxa2 = DA_taxa %>% group_by(Treatment, Added_Fc7,Genus, ASV) %>% 
+  summarise(n = n()) %>% 
+  filter(n==3)
+```
+
+How many taxa were identified by the methods? 
+```{r}
+DA_taxa %>% group_by(Genus) %>% distinct(Genus)
+DA_taxa %>% group_by(ASV) %>% distinct(ASV) # 95 genera, 1032 ASVs
+#how many taxa identied by each method
+DA_taxa %>% group_by(method, abundance) %>% distinct(ASV) %>% summarise(n = n()) 
+#Ancombc is the most conservative, followed by corncob and then DeSeq2
+```
+
+
+We want to plot all the significantly abundant taxa
+```{r, message=FALSE}
+ps_d7 = d7
+genus_abundance <- prep_mdf2(ps = ps_d7, subgroup_level = "ASV") #gets the relative abundance for each genus in each sample
+all_methods = DA_taxa %>% 
+  filter(abundance == "Absolute") %>% 
+  dplyr::select(ASV, method) %>% 
+  reshape2::dcast(ASV~method) %>% 
+  dplyr::mutate(all = ancombc2*corncob*DeSeq2) %>% 
+  dplyr::filter(all > 0) %>% 
+  dplyr::select(ASV)
+
+sig_DA_taxa = DA_taxa %>% 
+  filter(abundance == "Absolute") %>% 
+  select(Treatment:Family) %>% 
+  distinct() %>% 
+  filter(ASV %in% all_methods$ASV)
+```
+```{r}
+#we want to add average abundance to each treatment\
+# Phage vs control
+#add mean group abundance to df 
+phage_ab = genus_abundance %>% filter(DPI == 7, Treatment != "AB", 
+                           ASV %in% all_methods$ASV) %>% 
+  group_by(Added_Fc7, Treatment, ASV, Genus, Class) %>% 
+  summarise(meanAB = mean(Abundance)*100) %>% ungroup() %>%   
+  tidyr::spread(value = meanAB, key = Treatment)%>%
+  dplyr::rename(treated = Phage)
+
+DA_taxa_p = sig_DA_taxa %>% filter(Treatment == "Phage") 
+phage_cont = merge(DA_taxa_p, phage_ab)
+
+# AB vs control
+#add mean group abundance to df 
+AB_ab = genus_abundance %>% filter(DPI == 7, Treatment != "Phage", 
+                           ASV %in% all_methods$ASV) %>% 
+  group_by(Added_Fc7, Treatment, ASV, Genus, Class) %>% 
+  summarise(meanAB = mean(Abundance)*100) %>% ungroup() %>%   
+  tidyr::spread(value = meanAB, key = Treatment) %>%
+  dplyr::rename(treated = AB)
+DA_taxa_a = sig_DA_taxa %>% filter(Treatment == "AB") 
+AB_cont = merge(DA_taxa_a, AB_ab)
+
+sig_comparisons = dplyr::bind_rows(phage_cont, AB_cont)
+sig_comparisons2 = sig_comparisons %>% 
+  mutate(abs_abd_difference = (None-treated), 
+         ratio = None/treated) %>% 
+  mutate(absolute_difference = abs(abs_abd_difference)) %>%
+  mutate(log10_absolute_difference = log10(absolute_difference))
+```
+
+```{r}
+sig_comparisons2 = sig_comparisons2 %>%     
+  dplyr::mutate(Added_Fc7 = case_when(Added_Fc7 == "No" ~ "No-Fc7", 
+                                      Added_Fc7 == "Low" ~ "Low-Fc7", 
+                                      Added_Fc7 == "High" ~ "High-Fc7", 
+                                      Added_Fc7 == "no" ~ "No-Fc7", 
+                                      Added_Fc7 == "low" ~ "Low-Fc7", 
+                                      Added_Fc7 == "high" ~ "High-Fc7" )) %>%
+  mutate(Added_Fc7 = factor(Added_Fc7, levels = c("No-Fc7", "Low-Fc7", "High-Fc7" ))) 
+
+
+sig_comparisons2 %>%
+  ggplot(aes(x = ratio, y = absolute_difference, shape = Added_Fc7)) + 
+  annotate("rect", xmin = 1/50, xmax  = 50, ymax = Inf, ymin = 0, fill = "grey88", alpha  = 0.5) +    
+  annotate("rect", xmin=1/10, xmax=10, ymin=0, ymax=Inf, alpha=0.5, fill="grey68") + 
+  annotate("rect", xmin = 0.5, xmax  = 2, ymax = Inf, ymin = 0, fill = "grey38", alpha  = 0.5) +  
+  
+  geom_point(color = "black", size = 3, fill = "grey88") +
+  scale_shape_manual(values = c(21, 22,23 )) + 
+  facet_grid(Treatment~.) + 
+  my.theme +
+  scale_x_continuous(trans = "log10") +
+  scale_y_continuous(trans = "log10") + 
+  
+  geom_vline(xintercept = 1) + 
+  geom_point(data = sig_comparisons2 %>% filter(ratio > 5 | ratio < 1/5), 
+             aes(fill = Class, shape = Added_Fc7), size = 3) + 
+  scale_fill_manual(values = col) + 
+  
+  guides(fill = guide_legend(override.aes = list(shape = 21, size = 4 )), 
+         shape = guide_legend(override.aes = list(size = 4 )) ) +
+  
+  
+  ylab("Difference in ASV absolute abundance (None-treated)") + 
+  xlab("Ratio ASV absolute abundance (None/treated)") + 
+  geom_text(data = sig_comparisons2 %>% filter(ASV %in% c("Zotu17")), 
+             aes(label = ASV), size = 4, hjust = 0.5, vjust = 1.2, color = "black") 
+
+
+ggsave(filename = paste0(filepath_figures, "SF2_DA_ratio-and-difference_control-vs-treatment_16SrDNA_Absolute.pdf"), width = 180, height = 120, units = "mm")
+```
+
+
+
+```{r}
+sig_comparisons2 %>% 
+  filter(Treatment == "Phage") 
+#378 significant comparisons total 
+sig_comparisons2 %>% 
+  filter(Treatment == "Phage") %>% 
+  group_by(ASV) %>% distinct()
+#126 unique ASVs
+
+sig_comparisons2 %>% 
+  filter(Treatment == "Phage") %>%
+  mutate(large_diff = case_when(ratio > 5 ~ "large", 
+                                ratio < 1/5 ~ "large", 
+                                TRUE ~ "small")) %>% 
+  filter(large_diff == "large") %>% 
+  select(ASV) %>% distinct()
+#18 asv
+
+sig_comparisons2 %>% 
+  filter(Treatment == "Phage") %>%
+  mutate(large_diff = case_when(ratio > 5 ~ "large", 
+                                ratio < 1/5 ~ "large", 
+                                TRUE ~ "small")) %>% 
+  filter(large_diff == "large") %>% 
+  select(Genus) %>% distinct()
+#8 Genus
+
+sig_comparisons2 %>% 
+  filter(Treatment == "Phage") %>%
+  mutate(large_diff = case_when(ratio > 5 ~ "large", 
+                                ratio < 1/5 ~ "large", 
+                                TRUE ~ "small")) %>% 
+  filter(large_diff == "large") %>% 
+  select(Added_Fc7, ASV, Genus, Class, ratio, absolute_difference) %>% 
+  group_by(Added_Fc7) %>% 
+  summarise(n = n())
+
+sig_comparisons2 %>% 
+  filter(Treatment == "Phage") %>%
+  mutate(large_diff = case_when(ratio > 5 ~ "large", 
+                                ratio < 1/5 ~ "large", 
+                                TRUE ~ "small")) %>% 
+  filter(large_diff == "large") %>% 
+  select(Added_Fc7, ASV, Genus, Class, ratio, absolute_difference) %>% arrange(desc(absolute_difference)) %>% View()
+
+
+```
+```{r}
+sig_comparisons2 %>% 
+  filter(Treatment == "AB") 
+#378 significant comparisons total 
+sig_comparisons2 %>% 
+  filter(Treatment == "AB") %>% 
+  group_by(ASV) %>% distinct()
+#126 unique ASVs
+
+sig_comparisons2 %>% 
+  filter(Treatment == "AB") %>%
+  mutate(large_diff = case_when(ratio > 5 ~ "large", 
+                                ratio < 1/5 ~ "large", 
+                                TRUE ~ "small")) %>% 
+  filter(large_diff == "large") %>% 
+  select(ASV) %>% distinct()
+#122 asv
+
+sig_comparisons2 %>% 
+  filter(Treatment == "AB") %>%
+  mutate(large_diff = case_when(ratio > 5 ~ "large", 
+                                ratio < 1/5 ~ "large", 
+                                TRUE ~ "small")) %>% 
+  filter(large_diff == "large") %>% 
+  select(Genus) %>% distinct()
+#29 Genus
+
+sig_comparisons2 %>% 
+  filter(Treatment == "AB") %>%
+  mutate(large_diff = case_when(ratio > 5 ~ "large", 
+                                ratio < 1/5 ~ "large", 
+                                TRUE ~ "small")) %>% 
+  filter(large_diff == "large") %>% 
+  select(Added_Fc7, ASV, Genus, Class, ratio, absolute_difference) %>% 
+  group_by(Added_Fc7) %>% 
+  summarise(n = n())
+
+sig_comparisons2 %>% 
+  filter(Treatment == "AB") %>%
+  mutate(large_diff = case_when(ratio > 5 ~ "large", 
+                                ratio < 1/5 ~ "large", 
+                                TRUE ~ "small")) %>% 
+  filter(large_diff == "large") %>% 
+  select(Added_Fc7, ASV, Genus, Class, ratio, absolute_difference) %>% arrange(desc(absolute_difference))
+
+sig_comparisons2 %>% 
+  filter(Treatment == "AB") %>%
+  mutate(large_diff = case_when(ratio > 5 ~ "large", 
+                                ratio < 1/5 ~ "large", 
+                                TRUE ~ "small")) %>% 
+  filter(large_diff == "large") %>% 
+  select(Added_Fc7, ASV, Genus, Class, ratio, absolute_difference) %>%
+  
+  mutate(larger_in = case_when(ratio>1 ~"untreated", T ~"AB")) %>%
+  group_by(Class, larger_in) %>% 
+  select(ASV, Class, larger_in) %>% distinct() %>%
+  
+  summarise(n=n()) %>% 
+  ggplot(aes(y=Class, x = n, fill = larger_in)) + 
+  geom_bar(stat = "identity") 
+```
+
+# Gammaproteobacteria 
+```{r}
+gamma_AB_ASVs = sig_comparisons2 %>% 
+  filter(Treatment == "AB") %>%
+  mutate(large_diff = case_when(ratio > 5 ~ "large", 
+                                ratio < 1/5 ~ "large", 
+                                TRUE ~ "small")) %>% 
+  filter(large_diff == "large") %>% 
+  dplyr::filter(Class == "c_Gammaproteobacteria") %>% pull(ASV)
+
+sig_comparisons2 %>% 
+  filter(Treatment == "AB") %>%
+  mutate(large_diff = case_when(ratio > 5 ~ "large", 
+                                ratio < 1/5 ~ "large", 
+                                TRUE ~ "small")) %>% 
+  filter(large_diff == "large") %>% 
+  dplyr::filter(Class == "c_Gammaproteobacteria") %>% select(ASV:Family) %>% unique() %>% View()
+
+beta_AB = sig_comparisons2 %>% 
+  filter(Treatment == "AB") %>%
+  mutate(large_diff = case_when(ratio > 5 ~ "large", 
+                                ratio < 1/5 ~ "large", 
+                                TRUE ~ "small")) %>% 
+  filter(large_diff == "large") %>% 
+  dplyr::filter(Class == "c_Betaproteobacteria") %>% pull(ASV)
+```
+
+

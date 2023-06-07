@@ -1,0 +1,150 @@
+---
+title: "density statistics"
+---
+```{r, message=F, echo=F}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(emmeans)
+
+filepath = "C:/Users/madel/OneDrive - NTNU/Doktorgrad/Project 8 Phage therapy and AB in semi-cont/R-analysis/GitHubScripts"
+filepath_results = paste0(filepath, "/results/", Sys.Date(), "_")
+filepath_figures = paste0(filepath, "/figures/",  Sys.Date(), "_")
+source(paste0(filepath, "/plot.settings_waterphage.R"))
+flow_density = read.csv(file = paste0(filepath, "/results/2022-11-30_bacterial_density_flow_cyt_clean_nooutliers.csv")) 
+bacterial_density = flow_density %>%
+  filter(Gate == "Bacteria")
+#restructure dataframe
+lm_df = bacterial_density %>% 
+  dplyr::select(density_cells_mL, DPI, Added_Fc7, Treatment) %>%
+  dplyr::mutate(Added_Fc7 = factor(Added_Fc7, levels = c("no", "low", "high" )), 
+                Treatment = factor(Treatment, levels = c("none", "Phage", "AB")) ) 
+```
+
+Test for different model fits to the dataset
+# untransformed
+```{r}
+linear = lm(formula = density_cells_mL ~ DPI * Treatment * Added_Fc7,  data = lm_df)
+poly2 = lm(formula = density_cells_mL ~ Treatment * poly(DPI, degree = 2)*Added_Fc7,  data = lm_df)
+poly3 = lm(formula = density_cells_mL ~ Treatment * poly(DPI, degree = 3) * Added_Fc7,  data = lm_df)
+poly4 = lm(formula = density_cells_mL ~ Treatment * poly(DPI, degree = 4) * Added_Fc7,  data = lm_df)
+
+anova(linear, poly2, poly3, poly4)
+AIC = AIC(linear, poly2, poly3, poly4)$AIC
+r2 = c(summary(linear)$adj.r.squared, summary(poly2)$adj.r.squared, summary(poly3)$adj.r.squared, summary(poly4)$adj.r.squared) 
+#r sqr val
+shap=c(shapiro.test(resid(linear))$p.value, shapiro.test(resid(poly2))$p.value, shapiro.test(resid(poly3))$p.value, 
+       shapiro.test(resid(poly4))$p.value)
+round(t(data.frame(AIC, r2)),3)
+hist(resid(linear))
+hist(resid(poly2))
+hist(resid(poly3))
+hist(resid(poly4))
+```
+
+Predictability is not the best and the residuals are not normally distributed. Thus trying transforming the response variable. 
+
+# Transformations 
+To try and get normally distributed residuals I am applying some transformaions on the response variable. 
+Both rank and log10 works. 
+## log 10 
+a transformation that makes sense for density data
+```{r}
+linear = lm(formula = log10(density_cells_mL) ~ DPI * Treatment * Added_Fc7,  data = lm_df)
+poly2 = lm(formula =  log10(density_cells_mL) ~ Treatment * poly(DPI, degree = 2)*Added_Fc7,  data = lm_df)
+poly3 = lm(formula =  log10(density_cells_mL) ~ Treatment * poly(DPI, degree = 3) * Added_Fc7,  data = lm_df)
+poly4 = lm(formula =  log10(density_cells_mL) ~ Treatment * poly(DPI, degree = 4) * Added_Fc7,  data = lm_df)
+
+anova(linear, poly2, poly3, poly4)
+AIC = AIC(linear, poly2, poly3, poly4)$AIC
+r2 = c(summary(linear)$adj.r.squared, summary(poly2)$adj.r.squared, summary(poly3)$adj.r.squared, summary(poly4)$adj.r.squared) 
+#r sqr val
+shap=c(shapiro.test(resid(linear))$p.value, shapiro.test(resid(poly2))$p.value, shapiro.test(resid(poly3))$p.value, 
+       shapiro.test(resid(poly4))$p.value)
+round(t(data.frame(AIC, r2)),3)
+hist(resid(linear))
+hist(resid(poly2))
+hist(resid(poly3))
+hist(resid(poly4))
+```
+
+## rank
+```{r}
+lm_df_no_P = bacterial_density %>% mutate(microcosm = substr(Sample, 1,5)) %>%
+  dplyr::select(density_cells_mL, DPI, Added_Fc7, Treatment, microcosm) %>%
+  dplyr::mutate(microcosm = factor(microcosm), log_density = log(base = 10, x = density_cells_mL))  
+
+linear = lm(formula = rank(density_cells_mL) ~ DPI * Treatment * Added_Fc7,  data = lm_df_no_P)
+poly2 = lm(formula =  rank(density_cells_mL) ~ Treatment * poly(DPI, degree = 2)*Added_Fc7,  data = lm_df_no_P)
+poly3 = lm(formula =  rank(density_cells_mL) ~ Treatment * poly(DPI, degree = 3) * Added_Fc7,  data = lm_df_no_P)
+poly4 = lm(formula =  rank(density_cells_mL) ~ Treatment * poly(DPI, degree = 4) * Added_Fc7,  data = lm_df_no_P)
+
+anova(linear, poly2, poly3, poly4)
+AIC = AIC(linear, poly2, poly3, poly4)$AIC
+r2 = c(summary(linear)$adj.r.squared, summary(poly2)$adj.r.squared, summary(poly3)$adj.r.squared, summary(poly4)$adj.r.squared) 
+#r sqr val
+shap=c(shapiro.test(resid(linear))$p.value, shapiro.test(resid(poly2))$p.value, shapiro.test(resid(poly3))$p.value, 
+       shapiro.test(resid(poly4))$p.value)
+round(t(data.frame(AIC, r2)),3)
+hist(resid(linear))
+hist(resid(poly2))
+hist(resid(poly3))
+hist(resid(poly4))
+```
+Will go for log10 since it can be back transformed
+Based on investigations of the models I choose to use the log10 transformed 3rd degree polynomial model. 
+
+# poly 3 log10 tranformed model
+```{r}
+set.seed(3003)
+poly3 = lm(formula =  log10(density_cells_mL) ~ Treatment * poly(DPI, degree = 3) * Added_Fc7,  data = lm_df)
+# step(poly3) step did not indicate that any coefficients should be removed
+summary(poly3)
+anova(poly3)
+
+lm.summary <- summary(poly3)
+report = data.frame(Coefficient = rownames(lm.summary$coefficients), 
+           Estimate = paste0( format( round(lm.summary$coefficients[,1],1), nsmall = 1 ),  "±", 
+                               format( round(lm.summary$coefficients[,2],1), nsmall = 1 ) ), 
+           t = format( round(lm.summary$coefficients[,3],1), nsmall = 1 ),
+           p = format( round(lm.summary$coefficients[,4],3), nsmall = 1 )
+           ) 
+
+rownames(report) = NULL
+
+clipr::write_clip(anova(poly3)) #copy to excel table
+clipr::write_clip(report) #copy to excel table
+```
+
+#Investigate models
+```{r}
+set.seed(3003)
+EMM <-emmeans(object = poly3,  type = "response", adjust = "dunnettx",
+        specs = trt.vs.ctrl~ Treatment|poly(DPI, degree = 3)|Added_Fc7, 
+        at = list(DPI = c(0,1,2,3,4,5,6,7)))
+
+#get statistics for each comparison per day
+EMM$contrasts     # show the means wih dunnettx p-value correction within each day and Fc7 add. 
+                  #2 tets per group
+EMM$contrasts %>% rbind() #bonferroni correction for all compartisons (42 tests)
+
+estimates_day =EMM$contrasts %>%#get confidence intervals and p value per day
+     summary(infer = TRUE) %>% 
+  arrange(contrast) %>% 
+  data.frame()
+
+clipr::write_clip(estimates_day) 
+```
+
+
+```{r}
+df = emmip(object = poly3, formula =  Treatment|Added_Fc7 ~ poly(DPI, degree = 3),  at = list(DPI = seq(0,7, by = 0.2)), type = "response",
+          CIs = T, plotit = F) %>% # which is the same as the inraction term 
+  data.frame()%>% 
+  rename(density_cells_mL = yvar)
+
+saveRDS(object = df, file = paste0(filepath_results, "density_estimate_plot.RDS"))
+```
+
+
+

@@ -1,0 +1,48 @@
+---
+title: "Absolute abundances"
+---
+
+For most samples we have information about the absolute cell density in each 
+sample. We can thus perform many of the analysis with absolute abundances of 
+the bacterial community. 
+
+To accomplish this each samples 16s sequence reads are multiplied by the 
+samples cell density. 
+
+Both living and dead cells are counted with the flow cytometer and thus its most
+viable to only scale the DNA based 16s rRNA sequences. 
+
+```{r, message=FALSE}
+library(microbiome)
+library(dplyr)
+library(phyloseq)
+#load phyloseq object
+filepath = "C:/Users/madel/OneDrive - NTNU/Doktorgrad/Project 8 Phage therapy and AB in semi-cont/R-analysis/GitHubScripts"
+filepath_results = paste0(filepath, "/results/", Sys.Date(), "_")
+filepath_figures = paste0(filepath, "/figures/",  Sys.Date(), "_")
+ps = readRDS(file = paste0(filepath,"/rawdata/2023-02-02_Phyloseq_object_unnormalised_16srDNA_wo-controls.RDS"))
+base::source(paste0(filepath, "/plot.settings_waterphage.R"))
+```
+
+```{r}
+set.seed(3003)
+# first scale dataset to relative abundances 
+ps_rel = microbiome::transform(ps, transform = "compositional") 
+asv_tab = microbiome::otu_tibble(ps_rel)
+meta_den = microbiome::sample_tibble(ps_rel) %>% select(Sequence_name,density_cells_mL )%>% 
+  mutate(density_cells_mL = ifelse(is.na(density_cells_mL), 0, density_cells_mL))
+asv_tab = ps_rel@otu_table %>% as.data.frame() %>% t()
+#check that rows are the same
+#rownames(asv_tab) == meta_den$Sequence_name #all true 
+asv_abs = ceiling(t(asv_tab*meta_den$density_cells_mL))
+ps_abs = ps_rel
+ps_abs@otu_table = phyloseq::otu_table(asv_abs, taxa_are_rows = TRUE)
+#some samples have 0 abundance because the flow data is missing. These samples should be removed
+null_abundance = sort(ps_abs %>% sample_sums(), decreasing = F ) %>% data.frame() %>% filter(. == 0) %>% rownames()
+ps_abs = subset_samples(physeq = ps_abs, !Sequence_name %in% null_abundance)
+ps_abs = prune_taxa(taxa_sums(ps_abs) > 0, ps_abs)
+#saveRDS(object = ps_abs,file = paste0(filepath_results, "absolute_abundance_dataset_DNA.RDS"))
+```
+
+
+

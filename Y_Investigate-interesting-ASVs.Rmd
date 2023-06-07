@@ -1,0 +1,117 @@
+---
+title: "Investigate ASVs"
+---
+
+# Investigate ASVs
+```{r}
+normalised_1 =normalised
+t = as.data.frame(tax_table(normalised_1))
+t$ASV = rownames(t)
+t1 = phyloseq::tax_table(t)
+rownames(t1) = t1@.Data[,"ta7"]
+colnames(t1) = c(colnames(tax_table(normalised)), "ASV")
+tax_table(normalised_1) = t1
+
+mdf_prep <- prep_mdf(normalised_1, subgroup_level = "ASV")
+
+
+```
+```{r}
+#Cytophagaceae
+
+cyto = mdf_prep %>% filter(Family == "f_Cytophagaceae") %>% 
+  group_by(Order, Genus, OTU) %>% 
+  summarise(n = n(), max = max(Abundance)*100) %>% arrange(desc(max))
+
+cyto_keep = cyto %>% filter(max > 1)
+
+mdf_prep %>% filter(ASV %in% cyto_keep$OTU ) %>% 
+  ggplot(aes(x = Sample_name, y =Abundance , fill = OTU, color = OTU)) + 
+  geom_bar(stat = "identity") + 
+  facet_nested(Extraction ~ Added_Fc7 + Treatment + DPI, space = "free", scales = "free") +
+  theme(panel.spacing = unit(0, "lines") , 
+        axis.text.x = element_blank() ) + 
+  my.theme + 
+  scale_fill_manual(values = col[2:21]) + 
+scale_color_manual(values = col[2:21])  + 
+  ggtitle("o_Cytophagales > 1%")
+
+ggsave(filename = paste0(filepath_figures, "o_Cytophagales_1_asv.png"), width = 8, height = 4)
+```
+
+```{r}
+#	f_Pseudomonadaceae
+
+pseudo = mdf_prep %>% filter(Family == "f_Pseudomonadaceae") %>% 
+  group_by(Order, Genus, OTU) %>% 
+  summarise(n = n(), max = max(Abundance)*100) %>% arrange(desc(max))
+
+pseudo_keep = pseudo %>% filter(max > 1)
+
+mdf_prep %>% filter(ASV %in% pseudo_keep$OTU ) %>% 
+  ggplot(aes(x = Sample_name, y =Abundance , fill = Genus, color = Genus)) + 
+  geom_bar(stat = "identity") + 
+  facet_nested(Extraction ~ Added_Fc7 + Treatment + DPI, space = "free", scales = "free") +
+  theme(panel.spacing = unit(0, "lines") , 
+        axis.text.x = element_blank() ) + 
+  my.theme + 
+  scale_fill_manual(values = rep(col[2:21],3)) + 
+  scale_color_manual(values = rep(col[2:21],3))  + 
+  ggtitle("f_Pseudomonadaceae > 1%")
+
+ggsave(filename = paste0(filepath_figures, "f_Pseudomonadaceae_1_genus.png"), width = 8, height = 4)
+
+mdf_prep %>% filter(Family == "f_Pseudomonadaceae") %>% group_by(Genus) %>% 
+  distinct(ASV) %>%
+  summarise(n = n() )
+```
+
+
+#Cytophagales
+```{r}
+d7 = subset_samples(normalised, DPI == 7)
+d7 = subset_samples(d7, Extraction == "DNA")
+d7_prep = prep_mdf(d7, subgroup_level = "ASV")
+
+d7_prep %>% filter(Order == "o_Cytophagales", Genus == "g_Aquirufa" ) %>% 
+  ggplot(aes(x=Sample_name, y = Abundance, fill = ASV)) + 
+  geom_bar(stat = "identity") + 
+  my.theme + 
+  theme(text=element_text(size=10), 
+        axis.text.x = element_blank() , 
+        axis.ticks.x = element_blank(), 
+        axis.title.x = element_blank(), 
+        strip.text= element_text(size = 8),
+        panel.spacing = unit(0, "lines"), 
+        panel.grid.major.x = element_blank(),
+        axis.title.y = element_blank()
+        ) + 
+  ggh4x::facet_nested(~ Treatment+Added_Fc7, 
+                      scales = "free", space = "free_x", switch = "both") 
+
+ASV17 = d7_prep %>% filter(Order == "o_Cytophagales", ASV == "Zotu17" )
+cyto  = d7_prep %>% filter(Order == "o_Cytophagales") %>% group_by(Sample, Order) %>% summarise(tot_Cyt = sum(Abundance))
+
+left_join(cyto, ASV17) %>% mutate(per_asv17 = Abundance*100/tot_Cyt) %>% select(per_asv17) %>% ungroup() %>% na.omit() %>% summarise(mean = mean(per_asv17))
+```
+```{r}
+ASV_DNA  = phyloseq::subset_samples(normalised, Extraction == "DNA")
+ASV_df = prep_mdf(ASV_DNA, subgroup_level = "ASV")
+
+ASV_df %>% dplyr::filter(Genus == "g_Flavobacterium", Added_Fc7 == "no") %>% 
+  group_by(Genus, ASV, DPI, Treatment) %>%   
+  summarise(mean_ab = mean(Abundance)) %>% 
+  ungroup() %>% 
+  group_by(Genus, DPI, Treatment) %>% 
+  summarise(n = n(), tot_ab = sum(mean_ab)*100) 
+
+ASV_df %>% dplyr::filter(Genus == "g_Flavobacterium", Added_Fc7 == "no") %>% 
+  group_by(Genus, DPI, Treatment, Sample) %>%   
+  summarise(tot_ab = sum(Abundance)*100) %>% 
+  arrange(tot_ab)
+
+
+ASV_df %>% dplyr::filter(ASV == "Zotu1", Added_Fc7 == "no") %>% 
+  group_by(ASV, DPI, Treatment) %>% 
+  summarise(mean_ab = mean(Abundance)*100)
+```

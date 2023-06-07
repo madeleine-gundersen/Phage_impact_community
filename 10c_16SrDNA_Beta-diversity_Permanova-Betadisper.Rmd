@@ -1,0 +1,140 @@
+---
+title: "Beta diversity"
+---
+
+```{r, message=FALSE}
+library(phyloseq)
+library(ggplot2)
+library(dplyr)
+```
+
+```{r, message=FALSE}
+filepath = "C:/Users/madel/OneDrive - NTNU/Doktorgrad/Project 8 Phage therapy and AB in semi-cont/R-analysis/GitHubScripts"
+filepath_results = paste0(filepath, "/results/", Sys.Date(), "_")
+filepath_figures = paste0(filepath, "/figures/",  Sys.Date(), "_")
+
+physeq = readRDS(file = paste0(filepath,"/rawdata/2023-02-02_Phyloseq_object_unnormalised_16srDNA_wo-controls.RDS"))
+distance_BC_DNA = readRDS(file = paste0(filepath, "/results/2023-02-06_100_iter_Bray_Curtis_dist_DNA.RDS"))
+distance_Sor_DNA = readRDS(file = paste0(filepath, "/results/2023-02-06_100_iter_Sorensen_dist_DNA.RDS"))
+```
+
+
+```{r}
+results_df = data.frame()
+treatments = c("AB", "Phage")
+added = c("No", "Low", "High")
+days = c(1, 3, 7)
+set.seed(3003)
+
+for (k in 1:3) {
+  #subset added_fc7
+  add = phyloseq::subset_samples(physeq = physeq, Added_Fc7 == added[k])
+    for (j in 1:2) {
+    #filter away one of the treatmets to only compare control to either Phage or AB
+    treat = phyloseq::subset_samples(physeq = add, Treatment != treatments[j])
+    for (i in 1:3) { 
+      phy_day = phyloseq::subset_samples(physeq = treat, DPI == days[i]) #subsets one and one day
+      meta = data.frame(sample_data(phy_day))
+      seq_name = meta %>% pull(Sequence_name)
+      
+      distance_BC_DNA_sub = distance_BC_DNA %>% as.matrix() 
+      distance_BC_DNA_sub = distance_BC_DNA_sub[seq_name, seq_name] %>% as.dist()
+      distance_Sor_DNA_sub = distance_Sor_DNA %>% as.matrix() 
+      distance_Sor_DNA_sub = distance_Sor_DNA_sub[seq_name, seq_name] %>% as.dist()
+      
+      for(i_loop in 1:100) {
+        permanova = vegan::adonis2(formula = distance_BC_DNA_sub~Treatment, data = meta, 
+                                   permutations = 999, method = "bray")
+        temp_results = data.frame(DPI = days[i], 
+                                  distance = "Bray_Curtis",
+                       comp = paste0(unique(meta$Treatment)[1], "_",  unique(meta$Treatment)[2]), 
+                       Added_Fc7 = unique(meta$Added_Fc7)[1], 
+                       iteration = i_loop, 
+                       r2_treatment = permanova$R2[1], 
+                       F_treatment = permanova$F[1], 
+                       p_treatment = permanova$`Pr(>F)`[1], 
+                       tot_df = permanova$Df[3], 
+                       betadisper_p = vegan::permutest(vegan::betadisper(distance_BC_DNA_sub,                                                                         group = meta$Treatment))$tab$`Pr(>F)`[1]) 
+        results_df = bind_rows(results_df, temp_results)
+        
+        permanova = vegan::adonis2(formula = distance_Sor_DNA_sub~Treatment, data = meta, 
+                                   permutations = 999, method = "bray")
+        temp_results = data.frame(DPI = days[i], 
+                                  distance = "Sørensen",
+                       comp = paste0(unique(meta$Treatment)[1], "_",  unique(meta$Treatment)[2]), 
+                       Added_Fc7 = unique(meta$Added_Fc7)[1], 
+                       iteration = i_loop, 
+                       r2_treatment = permanova$R2[1], 
+                       F_treatment = permanova$F[1], 
+                       p_treatment = permanova$`Pr(>F)`[1], 
+                       tot_df = permanova$Df[3], 
+                       betadisper_p = vegan::permutest(vegan::betadisper(distance_Sor_DNA_sub,group = meta$Treatment))$tab$`Pr(>F)`[1]) 
+        results_df = bind_rows(results_df, temp_results)
+        }}}}
+```
+
+
+```{r}
+saveRDS(object =results_df, file = paste0(filepath_results, "2023-02-06_Adonis2-permanova__betadisper_results_100iterations.RDS") )
+```
+
+```{r}
+results_df = readRDS(file = paste0(filepath, "/results/2023-02-06_Adonis2-permanova__betadisper_results_100iterations.RDS"))
+results_df %>% 
+  dplyr::group_by(distance, comp, DPI, Added_Fc7) %>% 
+  summarise(r2 = mean(r2_treatment), 
+            F_val = mean(F_treatment),
+            p_F = mean(p_treatment), 
+            beta_p = mean(betadisper_p)) %>%
+  mutate(dispersion = case_when(beta_p > 0.05~ "n.s", T ~ "different")) %>% 
+  #filter(distance == "Bray_Curtis") %>%  
+  
+  
+  ggplot2::ggplot(aes(x=distance, y = log10(p_F), fill = comp, shape = dispersion)) +
+  geom_point(aes(size = r2) ) + 
+  ggh4x::facet_nested(~DPI+Added_Fc7) + 
+  my.theme + 
+  geom_hline(yintercept = log10(0.05)) + 
+  scale_shape_manual(values = c(21,22)) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+results_df %>% 
+  dplyr::group_by(distance, comp, DPI, Added_Fc7) %>% 
+  summarise(r2 = mean(r2_treatment), 
+            F_val = mean(F_treatment),
+            p_F = mean(p_treatment), 
+            beta_p = mean(betadisper_p)) %>%
+  mutate(dispersion = case_when(beta_p > 0.05~ "n.s", T ~ "different")) %>% 
+  filter(distance == "Bray_Curtis") %>%  
+  
+  
+  ggplot2::ggplot(aes(x=DPI, y = (p_F), fill = comp, shape = dispersion)) +
+  geom_point(aes(size = r2) ) + 
+  ggh4x::facet_nested(~Added_Fc7) + 
+  my.theme + 
+  geom_hline(yintercept = (0.05)) + 
+  scale_shape_manual(values = c(21,22)) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+
+```{r}
+bet = results_df %>% 
+  dplyr::group_by(distance, comp, DPI, Added_Fc7) %>% 
+  summarise(r2 = signif(mean(r2_treatment),2), 
+            F_val = signif(mean(F_treatment),2),
+            p_F = signif(mean(p_treatment),2), 
+            beta_p = signif(mean(betadisper_p),2), 
+            df = mean(tot_df)) %>%
+  mutate(dispersion = case_when(beta_p > 0.05~ "", T ~ "different"), 
+         sig_Permanova = case_when(p_F > 0.05~ "", T ~ "SIG")) #%>% 
+  
+clipr::write_clip(bet)
+```
+
+betadisper H0 is no difference in dispersion. 
+
+To test if one or more groups is more variable than the others, ANOVA of the distances to group centroids can be performed and parametric theory used to interpret the significance of F. An alternative is to use a permutation test. permutest.betadisper permutes model residuals to generate a permutation distribution of F under the Null hypothesis of no difference in dispersion between groups.
+

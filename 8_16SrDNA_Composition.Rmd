@@ -1,0 +1,123 @@
+---
+title: "Composition"
+---
+
+```{r, message=FALSE}
+#libraries
+library(dplyr)
+library(ggplot2)
+library(microshades)
+library(cowplot)
+```
+
+```{r}
+# seed and pathways
+set.seed(3003)
+filepath = "C:/Users/madel/OneDrive - NTNU/Doktorgrad/Project 8 Phage therapy and AB in semi-cont/R-analysis/GitHubScripts"
+filepath_results = paste0(filepath, "/results/", Sys.Date(), "_")
+filepath_figures = paste0(filepath, "/figures/",  Sys.Date(), "_")
+
+base::source(paste0(filepath, "/plot.settings_waterphage.R"))
+source(paste0(filepath, "/ps_melt2.R"))
+
+relative = readRDS(file = paste0(filepath,"/rawdata/2023-02-02_Phyloseq_object_unnormalised_16srDNA_wo-controls.RDS"))
+relative = phyloseq::subset_samples(relative, !Sample_name %in% c("JW-1-D-0", "JW-2-D-0"))
+ab_ab = readRDS(paste0(filepath, "/rawdata/2023-02-02_Phyloseq_absolute_abundance_16SrDNA_wo-controls.RDS"))
+```
+
+#Order
+max 5 selected groups!
+The dataframe mdf_norm contains sample data and abundance info. The dataframe cdf_norm stores the color mapping information used for plotting.
+
+plot_microshades produces a stacked barplot with ordered subgroup taxonomy. 
+The darkest shade is the most abundant, and the lightest shade is the least abundant. (excluding the “other” subgroup from each of the selected groups)
+```{r, message=FALSE}
+# Use microshades function prep_mdf to agglomerate, normalize, and melt the phyloseq object
+mdf_rel <- prep_mdf(relative, subgroup_level = "Order")
+abundance_group = mdf_rel %>% group_by(Phylum) %>% 
+  summarise(av_ab = mean(Abundance)) %>% 
+  arrange(desc(av_ab)) 
+
+#the top 5 phyla contains uncl_d_Bacteria - we dont want this. 
+selected_groups_vector = abundance_group$Phylum[c(1:2,4:6)]
+color_obj_rel = microshades::create_color_dfs(mdf_rel,
+                             selected_groups = selected_groups_vector, 
+                             group_level = "Phylum",
+                             subgroup_level = "Order", 
+                             cvd = FALSE, 
+                             top_orientation = FALSE)
+
+mdf_norm_rel <- color_obj_rel$mdf
+cdf_norm_rel <- color_obj_rel$cdf
+
+#Absolute abundance
+mdf_abs <- prep_mdf2(ab_ab, subgroup_level = "Order")
+color_obj_abs = microshades::create_color_dfs(mdf_abs,
+                             selected_groups = selected_groups_vector, 
+                             group_level = "Phylum",
+                             subgroup_level = "Order", 
+                             top_orientation = FALSE,
+                             cvd = FALSE)
+
+mdf_norm_abs <- color_obj_abs$mdf
+cdf_norm_abs <- color_obj_abs$cdf
+mdf_norm_abs = mdf_norm_abs %>% filter(Extraction != "RNA")
+#Combinding 
+mdf_norm_rel$type = "Relative_abundance"
+mdf_norm_abs$type = "Absolute_abundance"
+
+mdf_norm_both = bind_rows(mdf_norm_rel, mdf_norm_abs) %>% 
+  dplyr::mutate(type = factor(type, levels = c("Relative_abundance", "Absolute_abundance")), 
+                Treatment = case_when(Treatment == "AB"~"A", 
+                                      Treatment == "Phage"~"P", 
+                                      Treatment == "None"~"N")) %>% 
+  dplyr::mutate(Treatment = factor(Treatment, levels = c("N", "P", "A"))) %>%
+    dplyr::mutate(Added_Fc7 = case_when(Added_Fc7 == "No" ~ "No-Fc7", 
+                                      Added_Fc7 == "Low" ~ "Low-Fc7", 
+                                      Added_Fc7 == "High" ~ "High-Fc7")) %>%
+  mutate(Added_Fc7 = factor(Added_Fc7, levels = c("No-Fc7", "Low-Fc7", "High-Fc7" )))
+```
+
+
+```{r, message=FALSE}
+GP_legend = custom_legend(mdf_norm_rel, legend_key_size = 0.5, legend_text_size =25,
+                cdf_norm_rel, 
+                group_level = "Phylum",
+                subgroup_level = "Order") + 
+  my.theme + 
+  theme(panel.border = element_rect(color = "transparent", fill = "transparent"),
+        axis.line = element_line(colour = "transparent", linewidth = 0.3))
+
+#Absolute and relative abundance
+rel_abs_plot =
+
+microshades::plot_microshades(x = "Sample_name", 
+                              mdf_norm_both, cdf_norm_rel, 
+                              group_label = "Phylum Order") + 
+  my.theme + 
+  coord_cartesian(expand = FALSE) + 
+  theme(legend.position = "none",
+        text=element_text(size=25), 
+        axis.text.x = element_blank() , 
+        axis.ticks.x = element_blank(), 
+        axis.title.x = element_blank(), 
+        strip.text= element_text(size = 22),
+        panel.spacing = unit(0, "lines"), 
+        panel.grid.major.x = element_blank(),
+        axis.title.y = element_blank()
+        ) + 
+  ggh4x::facet_nested(type ~ Added_Fc7+DPI+Treatment, 
+                      scales = "free", space = "free_x", switch = "both") 
+
+cowplot::plot_grid(rel_abs_plot, GP_legend,  rel_widths = c(1, .4))
+```
+
+
+```{r}
+ggsave(filename = paste0(filepath_figures, "Figure5_Relative-Absolute-abundance_Phylum-Order.pdf"), 
+       width = 180*3.5, height = 120*2.5, units = "mm", dpi = 600)
+```
+
+
+
+

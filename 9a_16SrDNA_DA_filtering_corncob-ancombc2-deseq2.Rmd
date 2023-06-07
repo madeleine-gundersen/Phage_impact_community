@@ -1,0 +1,358 @@
+---
+title: "Differential absolute abundance analysis"
+---
+
+```{r, message=FALSE}
+library(ggplot2)
+library(phyloseq)
+library(dplyr)
+library(tidyr)
+library(corncob) #devtools::install_github("bryandmartin/corncob", dependencies = TRUE, force = TRUE)
+```
+
+# Filter dataset
+
+```{r}
+filepath = "C:/Users/madel/OneDrive - NTNU/Doktorgrad/Project 8 Phage therapy and AB in semi-cont/R-analysis/GitHubScripts"
+filepath_results = paste0(filepath, "/results/", Sys.Date(), "_")
+filepath_figures = paste0(filepath, "/figures/",  Sys.Date(), "_")
+source(paste0(filepath, "/plot.settings_waterphage.R"))
+```
+
+```{r}
+#select taxa to use for DA analysis. Criteria is that the total abundanance of the ASV is over 1% (0.01 in rel abundance) and has a prevalance in over 5% of the samples (i.e. 8 samples)
+ps_exp_comp = readRDS(file = paste0(filepath,"/rawdata/2023-02-02_Phyloseq_absolute_abundance_16SrDNA_wo-controls.RDS"))
+ps_exp_comp_r_filt = metagMisc::phyloseq_filter_prevalence(ps_exp_comp, 
+                                      prev.trh = 0.05, 
+                                      abund.trh = 2500, 
+                                      abund.type = "total",
+                                      threshold_condition = "AND")
+
+
+#1508 taxa used for DA analysis
+```
+
+```{r}
+taxa_sums_ps = taxa_sums(ps_exp_comp) %>% data.frame() %>% 
+         rename(Total = ".") %>% arrange(desc(Total)) %>%
+  filter(Total< 5000) %>%
+  mutate(cutoff = case_when(Total < 2500 ~ "remove", T ~"keep"))
+  
+ggplot(data =taxa_sums_ps, aes(x=Total, fill = cutoff)) + 
+  geom_histogram(bins = 200) + 
+  scale_y_continuous(trans = "log10")
+```
+
+```{r}
+#start with raw dataset. algoritms are fixing the sampling bias 
+ps_exp = ps_exp_comp_r_filt
+d7 = phyloseq::subset_samples(physeq = ps_exp, DPI == "7")
+sample_data(d7) = sample_data(d7) %>% data.frame() %>% 
+  mutate(group = paste0(sample_data(d7)$Treatment, "_", sample_data(d7)$Added_Fc7)) %>% 
+  mutate(group = factor(group, levels = c("None_No", "None_Low", "None_High",
+                                          "Phage_No","Phage_Low", "Phage_High", 
+                                          "AB_No", "AB_Low", "AB_High"))) 
+d7_DNA = prune_taxa(taxa_sums(d7) > 0, d7) #1505 taxa 7DPI, 1508 ASVs total
+saveRDS(d7_DNA, file = paste0(filepath_results, "Phyloseq_absolute_abundance_16SrDNA_7DPI-filtered-1508ASVs.RDS"))
+```
+
+We are interested in testing for differential taxa wihin each propagule pressure, comparing phage and AB to the control treatment
+
+#Corncob
+
+
+The corncob package (Douglas,et al https://doi.org/10.1038/s41467-022-28034-z</div>)
+
+We converted the metadata and non-rarefied feature tables into a phy-loseq object (version 1.29.0)75, which we input to corncob’s differentialTest func-tion (version 0.1.0)10. This functionfits each taxon count abundance to a beta-binomial model, using logit link functions for both the mean and overdispersion.
+
+Because corncob models each of these simultaneously and performs both differ-ential abundance and differential variability testing10, we set the null over-dispersion model to be the same as the non-null model so that only taxa havingdifferential abundances were identified. 
+
+Finally, the function performed sig-nificance testing, for which we chose Wald tests (with the default non-bootstrapsetting), and we obtained BH FDR-correctedp-values as output
+
+```{r}
+d7_DNA_no = subset_samples(d7_DNA, Added_Fc7 == "No") 
+da_analysis_DNA_n = differentialTest(formula =  ~ Treatment, #only interested in differential abundance  
+                               phi.formula = ~  Treatment, 
+                               formula_null = ~ 1, 
+                               phi.formula_null = ~ Treatment,
+                               test = "Wald", #wald significance test 
+                               boot = FALSE, #default to false 
+                               data = d7_DNA_no,#the phyloseq object 
+                               fdr_cutoff = 0.05) #alpha value for significance
+## low DNA
+d7_DNA_low = subset_samples(d7_DNA, Added_Fc7 == "Low") 
+da_analysis_DNA_l = differentialTest(formula =  ~ Treatment, #only interested in differential abundance  
+                               phi.formula = ~  Treatment, 
+                               formula_null = ~ 1, 
+                               phi.formula_null = ~ Treatment,
+                               test = "Wald", #wald significance test 
+                               boot = FALSE, #default to false 
+                               data = d7_DNA_low,#the phyloseq object 
+                               fdr_cutoff = 0.05) #alpha value for significance
+#high
+d7_DNA_high = subset_samples(d7_DNA, Added_Fc7 == "High") 
+da_analysis_DNA_h = differentialTest(formula =  ~ Treatment, #only interested in differential abundance  
+                               phi.formula = ~  Treatment, 
+                               formula_null = ~ 1, 
+                               phi.formula_null = ~ Treatment,
+                               
+                               test = "Wald", #wald significance test 
+                               boot = FALSE, #default to false 
+                               data = d7_DNA_high,#the phyloseq object 
+                               fdr_cutoff = 0.05) #alpha value for significance
+```
+
+```{r}
+df = plot(da_analysis_DNA_n, data_only = T, level = "ASV")  %>% mutate(Added_Fc7 ="No")
+corncob_result_df = df
+corncob_list = list(da_analysis_DNA_n = da_analysis_DNA_n)
+
+df = plot(da_analysis_DNA_l, data_only = T,level = "ASV") %>% mutate(Added_Fc7 ="Low")
+corncob_result_df = bind_rows(df, corncob_result_df)
+list = list(da_analysis_DNA_l = da_analysis_DNA_l)
+corncob_list = append(corncob_list, list)
+
+df = plot(da_analysis_DNA_h, data_only = T, level = "ASV") %>% mutate(Added_Fc7 ="High")
+corncob_result_df = bind_rows(df, corncob_result_df)
+list = list(da_analysis_DNA_h = da_analysis_DNA_h)
+corncob_list = append(corncob_list, list)
+#refine dataframe
+plotdf = corncob_result_df %>% 
+  separate(variable, sep = "\n",
+           into =  c("Treatment", "Dif_abd"  ) ) %>% 
+  mutate(Treatment = substring(Treatment, 10)) %>% 
+  mutate(ASV = taxa) %>% 
+  dplyr::rename(b_estimate = x, CI_low95 =xmin, CI_high95 = xmax )
+ASV_tax = data.frame(tax_table(d7)) %>% select(Domain:ASV) %>% distinct() %>% filter(ASV %in% plotdf$ASV)
+plotdf2 = merge(x = plotdf,y =ASV_tax, by = "ASV")
+
+corncob_list = append(corncob_list, list(df_results = plotdf2))
+saveRDS(object = corncob_list, file = paste0(filepath_results, "Corncob_list-results_ASV_DNA_absolute_1508.RDS"))
+```
+
+# ANCOMBC
+
+prv_cut	- a numerical fraction between 0 and 1. Taxa with prevalences less than prv_cut will be excluded in the analysis. For instance, suppose there are 100 samples, if a taxon has nonzero counts presented in less than 10 samples, it will not be further analyzed. Default is 0.10.
+
+lib_cut	-a numerical threshold for filtering samples based on library sizes. Samples with library sizes less than lib_cut will be excluded in the analysis. Default is 0, i.e. do not discard any sample.
+
+
+```{r}
+# ANCOM
+set.seed(3003)
+d7_fam <- d7_DNA
+d7_fam@sam_data$tr_group = d7_fam@sam_data$group
+#ancombc also supports importing data in phyloseq format
+out_tr_add = ANCOMBC::ancombc2(#tax_level = NULL, aggregates at lowest tax rank - i.e. ASV
+              data = d7_fam, #phyloseq object
+              fix_formula  = "tr_group", 
+              p_adj_method = "holm", 
+              prv_cut = 0, #Taxa with prevalences less than prv_cut will be excluded in the analysis 
+              lib_cut = 0, #no samples are removed
+              group = "tr_group",
+              struc_zero = TRUE, 
+              pseudo = 0, 
+              pseudo_sens = TRUE,
+              pairwise = T, #compare all groups to each other
+              neg_lb = F, 
+              iter_control = list(tol = 0.01, max_iter = 100, verbose = FALSE),
+              alpha = 0.05,
+              n_cl = 1, verbose = TRUE)
+
+saveRDS(object = out_tr_add, file = paste0(filepath_results, "ANCOMBC_results_Group-treatments_ASV_DNA_absolute_1508.RDS"))
+
+##  Structural zeros
+output = out_tr_add
+tab_zero = output$zero_ind
+res_pair = output$res_pair
+res_pair %>%
+    dplyr::select(taxon, contains("diff")) 
+# we want to compare pairwise within the added Fc7 groups. no added control vs phage, no added control vs ab, low added ....
+df_fig =
+res_pair %>%
+  #keep taxa that are differentially abundant in groups of interest
+    dplyr::filter(diff_tr_groupPhage_No == 1 | 
+                    diff_tr_groupAB_No == 1| 
+                    diff_tr_groupPhage_Low_tr_groupNone_Low == 1| 
+                    diff_tr_groupAB_Low_tr_groupNone_Low == 1| 
+                    diff_tr_groupPhage_High_tr_groupNone_High == 1| 
+                    diff_tr_groupAB_High_tr_groupNone_High == 1) %>%
+  #change value to 0 if not significantly different in the group
+  dplyr::mutate(lfc_tr_groupPhage_No = ifelse(diff_tr_groupPhage_No == 1, 
+                                              lfc_tr_groupPhage_No, 0),
+                lfc_tr_groupAB_No = ifelse(diff_tr_groupAB_No == 1, 
+                                           lfc_tr_groupAB_No, 0),
+                lfc_tr_groupPhage_Low_tr_groupNone_Low = 
+                  ifelse(diff_tr_groupPhage_Low_tr_groupNone_Low == 1, 
+                         lfc_tr_groupPhage_Low_tr_groupNone_Low, 0),
+                lfc_tr_groupAB_Low_tr_groupNone_Low = 
+                  ifelse(diff_tr_groupAB_Low_tr_groupNone_Low == 1, 
+                         lfc_tr_groupAB_Low_tr_groupNone_Low, 0),
+                lfc_tr_groupPhage_High_tr_groupNone_High = 
+                  ifelse(diff_tr_groupPhage_High_tr_groupNone_High == 1, 
+                         lfc_tr_groupPhage_High_tr_groupNone_High, 0),
+                lfc_tr_groupAB_High_tr_groupNone_High = 
+                  ifelse(diff_tr_groupAB_High_tr_groupNone_High == 1, 
+                         lfc_tr_groupAB_High_tr_groupNone_High, 0)) %>% 
+  #change names to more readable names
+  dplyr::transmute(taxon, 
+              `No_added Phage vs control` = round(lfc_tr_groupPhage_No, 2),
+              `No_added AB vs control` = round(lfc_tr_groupAB_No, 2), 
+              `Low_added Phage vs control` = round(lfc_tr_groupPhage_Low_tr_groupNone_Low, 2),
+              `Low_added AB vs control` = round(lfc_tr_groupAB_Low_tr_groupNone_Low, 2),
+              `High_added Phage vs control` = round(lfc_tr_groupPhage_High_tr_groupNone_High, 2),
+              `High_added AB vs control` = round(lfc_tr_groupAB_High_tr_groupNone_High, 2))   %>% 
+  #restructure df to have groups in one column and values in another instead of a matrix format
+    pivot_longer(cols = `No_added Phage vs control`:`High_added AB vs control`, 
+                 names_to = "group", values_to = "value") %>%
+    arrange(taxon) %>% #arrange by alphabetical order
+    mutate(comparison = factor(group, levels = c("No_added Phage vs control", 
+                                                 "Low_added Phage vs control",   
+                                                 "High_added Phage vs control" ,
+                                                 "No_added AB vs control", 
+                                                 "Low_added AB vs control" ,
+                                                 "High_added AB vs control" )))
+
+gen_df = data.frame(tax_table(d7_DNA)) %>% select(Domain:ASV) %>% distinct() %>% 
+  filter(ASV %in% df_fig$taxon) %>% mutate(taxon = ASV)
+df_fig_t = merge(x = df_fig,y = gen_df, by = "taxon")
+saveRDS(object = df_fig_t, file = paste0(filepath_results, "ANCOMBC_result_pairwize-organised_ASV_DNA_absolute_1508.RDS"))
+```
+
+# DeSeq2
+Following guide given in Statistical Analysis of Microbiome Data with R chapter 11.5 The DESeq and DESeq2 Packages https://doi.org/10.1007/978-981-13-1534-3
+
+```{r}
+library(DESeq2) # BiocManager::install("DESeq2")
+library(phyloseq)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+# DeSeq2
+set.seed(3003)
+physeq = d7_DNA
+# convert OTU table to matrix
+otu_tab = (otu_table(physeq))
+#DESeq2 need taxa(genes=rows) by samples(=columns)
+countData<-(as(otu_tab, "matrix"))
+#head(countData)
+#Step 2: Create the Sample Metadata Table
+meta = data.frame(sample_data(physeq))
+group = meta$group
+#Step 3: Build the DESeq2 Object
+# build the deseq object 
+metaData = data.frame(row.names=colnames(countData),group=group)
+dds = DESeqDataSetFromMatrix(countData = countData, colData = metaData, design = ~group)
+dds <- dds[rowSums(counts(dds)) > 0,] #double check all 0 count taxa are gone
+#normalise data with median ration method.
+#Step 5: Normalize the Count Data
+dds <- estimateSizeFactors(dds)
+#sizeFactors(dds)
+#Step 6: Estimate the Dispersion
+#estimate the dispersion 
+dds<- estimateDispersions(dds)
+#Step 7: Test the Differential Abundance
+deseq_restult = DESeq2::DESeq(object = dds, 
+                              test = "Wald", 
+                              fitType = "parametric" )
+saveRDS(object = deseq_restult, file = paste0(filepath_results, "DeSeq_object_ASV_DNA_absolute_1508.RDS"))
+
+res <- results(deseq_restult, contrast = c("group", "Phage_No", "None_No"))
+df = as.data.frame(res) 
+df$taxa = rownames(df) 
+rownames(df) = NULL
+df = na.omit(df) #only keep significant taxa
+df = df %>% mutate(Added_Fc7 = "No", 
+              Treatment = "Phage", 
+              Extraction = "DNA", 
+              method = "DeSeq2") %>% 
+  filter(padj < 0.05)
+df1 = df
+
+res <- results(deseq_restult, contrast = c("group", "Phage_Low", "None_Low"))
+df = as.data.frame(res) 
+df$taxa = rownames(df) 
+rownames(df) = NULL
+df = na.omit(df) #only keep significant taxa
+df = df %>% mutate(Added_Fc7 = "Low", 
+              Treatment = "Phage", 
+              Extraction = "DNA", 
+              method = "DeSeq2") %>% 
+    filter(padj < 0.05)
+df1 = bind_rows(df1, df)
+
+res <- results(deseq_restult, contrast = c("group", "Phage_High", "None_High"))
+df = as.data.frame(res) 
+df$taxa = rownames(df) 
+rownames(df) = NULL
+df = na.omit(df) #only keep significant taxa
+df = df %>% mutate(Added_Fc7 = "High", 
+              Treatment = "Phage", 
+              Extraction = "DNA", 
+              method = "DeSeq2") %>% 
+    filter(padj < 0.05)
+df1 = bind_rows(df1, df)
+
+res <- results(deseq_restult, contrast = c("group", "AB_No", "None_No"))
+df = as.data.frame(res) 
+df$taxa = rownames(df) 
+rownames(df) = NULL
+df = na.omit(df) #only keep significant taxa
+df = df %>% mutate(Added_Fc7 = "No", 
+              Treatment = "AB", 
+              Extraction = "DNA", 
+              method = "DeSeq2") %>% 
+    filter(padj < 0.05)
+df1 = bind_rows(df1, df)
+
+res <- results(deseq_restult, contrast = c("group", "AB_Low", "None_Low"))
+df = as.data.frame(res) 
+df$taxa = rownames(df) 
+rownames(df) = NULL
+df = na.omit(df) #only keep significant taxa
+df = df %>% mutate(Added_Fc7 = "Low", 
+              Treatment = "AB", 
+              Extraction = "DNA", 
+              method = "DeSeq2") %>% 
+    filter(padj < 0.05)
+df1 = bind_rows(df1, df)
+
+res <- results(deseq_restult, contrast = c("group", "AB_High", "None_High"))
+df = as.data.frame(res) 
+df$taxa = rownames(df) 
+rownames(df) = NULL
+df = na.omit(df) #only keep significant taxa
+df = df %>% mutate(Added_Fc7 = "High", 
+              Treatment = "AB", 
+              Extraction = "DNA", 
+              method = "DeSeq2") %>% 
+    filter(padj < 0.05)
+df1 = bind_rows(df1, df)
+
+#Create a dataframe with the significant OTUs
+alpha = 0.05
+sigtab = df1[which(df1$padj < alpha), ]
+sigtab = cbind(as(sigtab, "data.frame"), as(tax_table(physeq)[sigtab$taxa, ], "matrix"))
+# Genus order
+x = tapply(sigtab$log2FoldChange, sigtab$Genus, function(x) max(x))
+x = sort(x, TRUE)
+sigtab$Genus = factor(as.character(sigtab$Genus), levels=names(x))
+sigtab2 = sigtab %>% mutate(classified = substr(Order, 1,1)) %>% 
+  mutate(Ordername =case_when(classified == "o" ~ substring(Order, 3), 
+                              classified != "o" ~ "x_unclassified at order level")) %>% 
+  mutate(classified2 = substr(Genus, 1,1)) %>% 
+  mutate(taxonname = case_when(classified2 == "g" ~ substring(Genus,1), 
+                              classified2 != "g" ~  substring(Genus, 6) )) %>%
+  mutate(lowest_class = substr(taxonname, 1,1)) %>%
+  mutate(group = 
+           case_when(classified2 == "g" ~  paste0(substring(taxonname,3)), 
+                     classified2 != "g" ~  paste0("uncl. (", substring(taxonname,1,1), " ", substring(taxonname,3), ")"))) %>%
+  mutate(classified_c = substr(Class, 1,1)) %>% 
+  mutate(classname =case_when(classified_c == "c" ~ substring(Class, 3), 
+                              classified_c != "c" ~ "x_unclassified at class level")) %>%
+  mutate(classified_f = substr(Family, 1,1)) %>% 
+  mutate(classname_f =case_when(classified_f == "f" ~ substring(Family, 3), 
+                              classified_f != "f" ~ "x_unclassified at family level"))
+
+write.csv(x = sigtab2, file = paste0(filepath_results, "DeSeq_result-dataframe_ASV_DNA_absolute_1508.csv"))
+```

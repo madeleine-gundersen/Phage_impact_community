@@ -1,0 +1,176 @@
+---
+title: "Create phyloseq object of ASV dataset"
+author: "Madeleine Gundersen"
+date: "23-02-02"
+---
+
+Script for making a phyloseq object from an zOTU/ASV table.
+(see https://github.com/joey711/phyloseq/wiki/phyloseq-class-structure-(developer)
+
+```{r}
+#import library and set filepath
+library("phyloseq") 
+library("readxl")
+library("magrittr")
+library("ape")
+library(dplyr)
+library(genefilter) #BiocManager::install("genefilter")
+set.seed(3003)
+sessionInfo()
+filepath = "C:/Users/madel/OneDrive - NTNU/Doktorgrad/Project 8 Phage therapy and AB in semi-cont/R-analysis/GitHubScripts"
+```
+
+# Import ASV table
+```{r}
+ASV_table = read.delim(file = paste0(filepath, "/rawdata/Sequencing_ASV_table_DNA_RNA.txt"), 
+                      sep = "\t",
+                      row.names = 1)
+# makes a phyloseq object with an ASV table
+ASVs = phyloseq::otu_table(ASV_table, taxa_are_rows = TRUE)
+```
+
+# Import taxonomy information
+import_sintax_file.R can be found and downloaded here: https://rdrr.io/github/jfq3/RDPutils/src/R/import_sintax_file.R
+```{r}
+source(paste0(filepath, "/import_sintax-file.R") ) 
+taxmat = import_sintax_file(paste0(filepath, "/rawdata/Sequencing_Taxonomic_classification_ASVs_2022-09.sintax"), confidence = 0.8)
+TAX = phyloseq::tax_table(taxmat)
+experiment = phyloseq::phyloseq(ASVs, TAX)
+#Add ASV id to taxonomic table
+experiment = prune_taxa(taxa_sums(experiment) > 0, experiment) 
+#Add ASV column to tax data
+t = as.data.frame(tax_table(experiment))
+t$ASV = rownames(t)
+t1 = phyloseq::tax_table(t)
+rownames(t1) = t1@.Data[,"ta7"]
+colnames(t1) = c(colnames(tax_table(experiment)), "ASV")
+tax_table(experiment) = t1
+```
+
+# Import variables 
+```{r}
+meta = readxl::read_xlsx(paste0(filepath, "/rawdata/Sequencing_Metadata_2023-02-02.xlsx") , sheet = 1) %>% as.data.frame
+#sample name from sequencing is different (appended number in front and SXX in end)
+#make df with sample name
+sample_names_seq = data.frame(Sequence_name = colnames(ASV_table), sample_split  = colnames(ASV_table))
+#split sample name and make new column matching metadata names
+sample_names_seq.1 = sample_names_seq %>% 
+  tidyr::separate(col = sample_split, sep = "_", into = c("extraction", "split2")) %>% 
+  tidyr::separate(col = split2, into = c("a", "b", "c", "d", "e")) %>% 
+  dplyr::mutate(Sample_name = paste0(extraction,"_", b, "-", c, "-", d, "-",e))
+
+#change names of controls
+sample_names_seq.1 = sample_names_seq.1 %>% 
+  dplyr::mutate('Sample_name_ex' = case_when(Sample_name == "DNA_PCR-control-dayCN3-3"~ "DNA_PCR-control-dayCN3-3-CN1-7", 
+                          Sample_name == "DNA_PCR-control-day7-NA"~ "DNA_PCR-control-day7", 
+                          Sample_name == "DNA_PCR-control-day3-NA"~ "DNA_PCR-control-day3", 
+                          Sample_name == "DNA_PCR-control-day01-NA"~ "DNA_PCR-control-day01", 
+                          Sample_name == "DNA_extraction-kit-blank-1"~ "DNA_extraction kit blank 1", 
+                          Sample_name == "DNA_wash-filter-NA-NA"~ "DNA_wash-filter", 
+                          Sample_name == "DNA_MQ-filter-NA-NA" ~ "DNA_MQ-filter", 
+                          Sample_name == "RNA_ex-kit-blank-1" ~ "RNA_extraction kit blank 1", 
+                          Sample_name == "RNA_iScript-day37-blank-NA" ~ "RNA_iScript-day37-blank", 
+                          Sample_name == "RNA_ex-kit-blank-2" ~ "RNA_extraction kit blank 2" , 
+                          Sample_name =="RNA_iScript-day01-blank-NA" ~ "RNA_iScript-day01-blank", 
+                          T ~ Sample_name )) %>% 
+  dplyr::mutate(Sample_name = substring(Sample_name_ex, 5) )%>% 
+  select(Sequence_name, Sample_name, Sample_name_ex)
+#combine metadata file with sequencing sample names
+meta.2 = left_join(sample_names_seq.1, meta, by = c("Sample_name_ex", "Sample_name"))
+row.names(meta.2)=meta.2$Sequence_name
+#add live dead flow data to replicate 3
+#load dataset
+flow_data = read.csv2(paste0(filepath, "/rawdata/Live_dead_estimation_clean_2022-07-22.csv"),  sep = ",")
+#filter only days in sequencing data and make sample name column
+flow_data.1 = flow_data %>% select(Group, Sample, Day, Gate, pp, treatment, density_cells_mL) %>% 
+  filter(Day %in% c(0,1,3,7)) %>% 
+  mutate('Sample_name' = paste0(pp, "-", treatment, "-3-D", Day)) %>% 
+  select('Sample_name', Gate,density_cells_mL ) %>% reshape2::melt(id.var =c('Sample_name', "Gate")) 
+
+#split columns based on gate and add to metadata file
+dead = flow_data.1 %>% filter(Gate == "dead") %>% mutate(dead_mL = value) %>% select('Sample_name', dead_mL)
+dying = flow_data.1 %>% filter(Gate == "dying") %>% mutate(dying_mL = value) %>% select('Sample_name', dying_mL)
+living = flow_data.1 %>% filter(Gate == "living") %>% mutate(living_mL = value) %>% select('Sample_name', living_mL)
+
+meta.3 = left_join(meta.2, dead, by = 'Sample_name') 
+meta.4 = left_join(meta.3, dying, by = 'Sample_name') 
+meta.5 = left_join(meta.4, living, by = 'Sample_name') 
+#convert metadata to factors
+meta.6 = meta.5 %>% mutate(Added_Fc7 = factor(Added_Fc7, levels = c("No", "Low", "High" )), 
+                           Treatment = factor(Treatment, levels = c("None", "Phage", "AB")) , 
+                           T = factor(T, levels = c("N", "P", "AB")), 
+                           PP = factor(PP, levels = c("C", "L", "H")) ) 
+
+# add sequencing depth to data frame
+meta.7 = data.frame(meta.6, 
+                       depth = sample_sums(ASVs)) 
+
+# add flow cytometry data per sample (fixated density)
+flow_density = read.csv(file = paste0(filepath, "/rawdata/Bacterial_density_fixated_cells_clean-nooutliers_2022-11-30.csv")) %>% 
+  select(Group, Sample,density_cells_mL, PP, T, Rep, DPI, DPI_fac, Gate) 
+flow_density  = flow_density %>% 
+  dplyr::filter(Gate == "Bacteria") %>% 
+  mutate(Treatment = case_when(T == "C" ~ "N", T == "P" ~ "P", T == "A" ~ "AB") ) %>% 
+  mutate(Sample_name = paste0(PP, "-", Treatment, "-", Rep, "-D", DPI)) %>% 
+  filter(Gate == "Bacteria") %>% 
+  select(Sample_name, density_cells_mL)
+
+meta.8 = left_join(meta.7, flow_density, by  = "Sample_name")
+meta.9 = meta.8 %>% select(Sequence_name, Sample_name, Extraction, Sample_type, Added_Fc7, Treatment, PP, T, Rep, DPI, dead_mL, dying_mL, living_mL, density_cells_mL, depth)
+#create sample data in phyloseq format
+sam_variables = phyloseq::sample_data(meta.9)
+#make rownames the sample name to match ASV table
+rownames(sam_variables) = sam_variables$Sequence_name
+#comine to phyloseq object
+experiment = phyloseq::merge_phyloseq(experiment, sam_variables)
+```
+
+# 4. filter taxa 
+```{r}
+#taxa with over 1:1 ratio in control samples (visually inspected in excel file)
+taxa_contaminants = read.csv(file = paste0(filepath, "/rawdata/2022-09-15_Sequencing_16SrDNA-RNA_ASV-contaminants.txt" ))
+#make vector with the ASV names
+contaminants = taxa_contaminants$ASVs
+#only DNA for manuscript
+only_dna = subset_samples(experiment, Extraction == "DNA")
+only_dna = prune_taxa(taxa_sums(only_dna) > 0, only_dna) 
+#4849 taxa in DNA based samples
+archea = subset_taxa(physeq = only_dna, Domain == "d_Archaea") # 4 archea in dataset 
+#remove chloroplast sequences
+chloroplast = subset_taxa(physeq = only_dna, Class == "c_Chloroplast") #88 taxa
+chloroplast_cyano = subset_taxa(physeq = only_dna, Class == "uncl_p_Cyanobacteria/Chloroplast") # 39 taxa
+#127 clhoroplat
+cont_DNA = subset_taxa(only_dna, ASV %in% contaminants) #127 contminants
+taxaremove_DNA = c(rownames(cont_DNA@tax_table),rownames(archea@tax_table),  rownames(chloroplast@tax_table), rownames(chloroplast_cyano@tax_table) )
+# DNA and RNA for phyloseq object
+#remove archea
+archea = subset_taxa(physeq = experiment, Domain == "d_Archaea") # 4 archea in dataset 
+#remove chloroplast sequences
+chloroplast = subset_taxa(physeq = experiment, Class == "c_Chloroplast") #105 taxa
+chloroplast_cyano = subset_taxa(physeq = experiment, Class == "uncl_p_Cyanobacteria/Chloroplast") # 50 taxa
+taxaremove = c(contaminants,rownames(archea@tax_table),  rownames(chloroplast@tax_table), rownames(chloroplast_cyano@tax_table) ) #286 taxa
+saveRDS(taxaremove, file = paste0(filepath, "/rawdata/2022-09-15_taxa_to_remove.RDS"))
+#get names of all ASVs in dataset
+all_taxa = tibble(ASV = rownames(experiment@tax_table))
+#filter away all ASVs that should be removed
+keep_taxa = all_taxa %>% filter(!ASV %in% taxaremove) #total of 5008 taxa left
+saveRDS(keep_taxa, file = paste0(filepath, "/rawdata/2023-09-15_taxa_keep.RDS"))
+```
+
+#5. Import phylogenetic tree 
+```{r}
+#load phylogenetic tree created previously 
+tree.unroot_whole = readRDS(file = paste0(filepath, "/data/DNA_RNA_ASVs/2022-09-16_zOTU_phytree.RDS"))
+tree.unrooted = tree.unroot_whole$tree
+source(file = paste0(filepath, "/Scripts/pick_new_outgroup.R"))
+#pick_new_outgroup result in the ASV with the longest branch 
+new.outgroup = pick_new_outgroup(tree.unrooted) #zotu1803 chosen as outgroup
+#Now we root the tree with this ASV as root
+rootedTree = ape::root(tree.unrooted, outgroup=new.outgroup, resolve.root=TRUE)
+experiment_merged = merge_phyloseq(experiment, rootedTree) #dataset contains 5008 taxa
+```
+
+```{r}
+# makes an RDS file 
+saveRDS(experiment_merged, file = paste0(filepath, "/data/2023-02-02_ASV_raw_dataset_rna_dna.rds") ) 
+```

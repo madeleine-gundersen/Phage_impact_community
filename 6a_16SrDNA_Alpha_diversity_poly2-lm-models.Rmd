@@ -1,0 +1,71 @@
+---
+title: "Alpha diversity lm models"
+---
+
+#Package and load data
+```{r}
+library(phyloseq)
+library(ggplot2)
+library(dplyr)
+library(emmeans)
+```
+
+```{r}
+filepath = "C:/Users/madel/OneDrive - NTNU/Doktorgrad/Project 8 Phage therapy and AB in semi-cont/R-analysis/GitHubScripts"
+filepath_results = paste0(filepath, "/results/", Sys.Date(), "_")
+filepath_figures = paste0(filepath, "/figures/",  Sys.Date(), "_")
+source(paste0(filepath, "/plot.settings_waterphage.R"))
+
+normalised = readRDS(file = paste0(filepath,"/rawdata/2023-02-02_Phyloseq_object_scaled-rarified-26447_16SrDNA.RDS"))
+```
+
+```{r}
+set.seed(3003)
+alpha_div = data.frame(sample_data(normalised),
+                        richness = vegan::renyi(t(as.data.frame(normalised@otu_table)), scales = c(0), hill = TRUE),
+                        order1 = vegan::renyi(t(as.data.frame(normalised@otu_table)), scales = c(1), hill = TRUE),
+                        order2 = vegan::renyi(t(as.data.frame(normalised@otu_table)), scales = c(2), hill = TRUE)) %>%
+  mutate(eveness = order1/richness)
+#do not include jonsvatne (lake water) samples in modelling 
+alpha_div_nj = alpha_div%>% 
+  dplyr::filter(Sample_name != "JW-1-D-0", Sample_name != "JW-2-D-0")
+```
+
+```{r}
+set.seed(3003)
+model_DNA = lm(formula = richness ~ 
+                 poly(DPI, degree = 2) *Treatment * Added_Fc7,
+               data = alpha_div_nj %>% dplyr::filter(Extraction == "DNA")) #model for DNA and RNA seperatly
+lm.summary <- summary(model_DNA)
+report = data.frame(Coefficient = rownames(lm.summary$coefficients), 
+           Estimate = paste0( format( round(lm.summary$coefficients[,1],1), nsmall = 1 ),  "±", 
+                               format( round(lm.summary$coefficients[,2],1), nsmall = 1 ) ), 
+           t = format( round(lm.summary$coefficients[,3],1), nsmall = 1 ), 
+           p = lm.summary$coefficients[,4])  
+
+rownames(report) = NULL
+#clipr::write_clip(anova(model_DNA)) #copy to excel table
+clipr::write_clip(report) #copy to excel table
+```
+
+#Investigate models
+```{r}
+p_DNA = emmip(object = model_DNA, formula = Treatment ~ DPI|Added_Fc7,  at = list(DPI = seq(1,7, by = 0.2)), 
+          CIs = T, plotit = F) # which is the same as the inraction term
+
+alpha_with_estimate = p_DNA%>%  data.frame() %>% rename(richness = yvar)
+saveRDS(object = alpha_with_estimate, file = paste0(filepath_results, "2023-02-03_16SrDNA_ASVrichness_emmip_estimates.RDS"))
+```
+
+# Richness model 
+```{r}
+DNA_each_day = emmeans(object = model_DNA,  type = "response", adjust = "dunnettx",
+        specs = trt.vs.ctrl~ Treatment|Added_Fc7|poly(DPI, degree = 2), at = list(DPI = c(1,3,7)))
+
+estimates_day = DNA_each_day$contrasts %>%#get confidence intervals and p value per day
+  summary(infer = TRUE, digits = 1) %>% 
+  arrange(contrast) %>% 
+  data.frame() 
+
+clipr::write_clip(estimates_day) 
+```

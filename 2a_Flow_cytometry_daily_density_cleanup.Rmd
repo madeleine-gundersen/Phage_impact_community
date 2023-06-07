@@ -1,0 +1,230 @@
+---
+title: "Analysis of total bacterial density - cleaning up data"
+---
+```{r, message=F, echo=F}
+library(dplyr)
+library(ggplot2)
+filepath = "C:/Users/madel/OneDrive - NTNU/Doktorgrad/Project 8 Phage therapy and AB in semi-cont/R-analysis/GitHubScripts"
+filepath_results = paste0(filepath, "/results/", Sys.Date(), "_")
+filepath_figures = paste0(filepath, "/figures/",  Sys.Date(), "_")
+source(paste0(filepath, "/plot.settings_waterphage.R"))
+```
+
+#Import data and clean up datafile
+```{r}
+#import filenames of all fsc files collected
+filenames = paste0("C:/Users/madel/OneDrive - NTNU/Doktorgrad/Project 8 Phage therapy and AB in semi-cont/Flow cytometry/2022-09 daily bacterial density Fc7 phage AB jonsvatne/csv files/", 
+                   list.files(path = "C:/Users/madel/OneDrive - NTNU/Doktorgrad/Project 8 Phage therapy and AB in semi-cont/Flow cytometry/2022-09 daily bacterial density Fc7 phage AB jonsvatne/csv files/", 
+                              pattern = "*.csv")) 
+
+all_data = do.call(rbind, lapply(filenames, function(x) read.csv(x, stringsAsFactors = FALSE)))
+all_data = all_data %>% mutate(Sample = case_when(Sample == "H_C_2-1-DPI_dil-x2" ~ "H_C_2_1-DPI_dil-x2",
+                                                  Sample == "T_P_1_2_DPI_dil-x2" ~ "T_P_1_2-DPI_dil-x2",
+                                       T ~ Sample))
+```
+
+```{r}
+#clean up data 
+all_data_filtered = all_data %>% 
+  dplyr::select(-Plate, -Experiment, -Workspace, -Compensation.Source, -Autogate.Status) %>%
+  dplyr::filter(Group != "Controls") %>% #remove controls
+  dplyr::filter(Plot.Title %in% c("bacteria", "Fc7")) %>%  # only want bacteria population and Fc7 population in H and L 
+  dplyr::filter(Gate != "not-cigar") %>% 
+  dplyr::mutate(keep = case_when(Plot.Title == "bacteria" & Gate == "Bacteria" ~ "Keep", 
+                                 Plot.Title == "Fc7" & Gate == "Fc7" ~ "Keep", 
+                                 T ~ "dont_keep") ) %>% 
+  dplyr::filter(keep == "Keep")
+```
+
+```{r}
+all_data_filtered.1 = all_data_filtered %>%
+  tidyr::separate(col = Sample,
+                  into = c("PP", "T", "Rep", "DPI", "dil"), 
+                                 sep = "_", remove = F) %>% 
+  mutate(DPI = substr(DPI, 1,1), 
+         dil = substr(dil, 6, 6))
+#check that all samples are equal 
+check1 = all_data_filtered.1 %>% group_by(Sample) %>% summarise(n =n())
+#all samples have 1 or 2 datapoints depending on their PP
+```
+
+```{r}
+#select columns to work with 
+all_data_filtered.2 = all_data_filtered.1 %>% 
+  mutate(Concentration = as.double(Concentration), 
+         Dilution = as.double(dil)) %>% 
+  mutate(density_cells_mL = Concentration*Dilution*1000) %>% 
+  mutate(DPI_fac = factor(DPI, levels = c("0","1","2","3","4","5","6","7")))
+```
+```{r}
+#export whole dataframe
+write.csv(all_data_filtered.2, 
+          file = paste0(filepath, "/data/2022-11-08_bacterial_density_flow_cyt_clean.csv"))
+```
+
+# Find outliers of bacterial density
+```{r}
+flow_density = read.csv(file = paste0(filepath, "/results/2022-11-08_bacterial_density_flow_cyt_clean.csv")) %>% 
+  select(Group, Sample,density_cells_mL, PP, T, Rep, DPI, DPI_fac, Gate) 
+
+flow_density = flow_density %>% 
+  mutate(Added_Fc7 = case_when(PP == "C" ~ "no", PP == "T" ~ "low", PP == "H" ~ "high"), 
+         Treatment = case_when(T == "C" ~ "none", T == "P" ~ "Phage", T == "A" ~ "AB") ) %>% 
+  mutate(Added_Fc7 = factor(Added_Fc7, levels = c("no", "low", "high" )), 
+                                 Treatment = factor(Treatment, levels = c("none", "Phage", "AB")) , 
+                                 T = factor(T, levels = c("C", "P", "A")) )  
+```
+
+Inspect plot. 
+Some points appear to be outliers
+```{r}
+flow_density %>%
+  filter(Gate == "Bacteria") %>% 
+  ggplot2::ggplot(aes(x  = DPI, y = density_cells_mL, fill = Treatment)) + 
+  geom_point(shape = 21, size = 4) + 
+  facet_grid( ~ Added_Fc7) + 
+  my.theme + 
+  scale_y_continuous(trans = "log10", labels = scales::unit_format(unit = "e+06", scale = 1 / 1e+06, digits = 2)) + 
+  scale_fill_manual(values = treatment_cols1)
+```
+
+Identify outliers using identify_outliers() from rstatix pacakge. 
+Look at the PDF of the flow data to evaluate if there is a technical 
+outlier or biological. 
+```{r}
+flow_density %>%
+  dplyr::group_by(DPI, PP, T) %>% 
+  rstatix::identify_outliers(density_cells_mL) %>% 
+  dplyr::select(DPI,Sample,density_cells_mL, is.outlier, is.extreme)
+
+#visually inspect the flow cytometry plots and decide if the sample is a biological outlier or if its technical 
+#remove outliers
+flow_density_no = flow_density %>% 
+  filter(!Sample %in% c("C_A_4_0-DPI_dil-x2", #signal different
+                        "C_P_3_0-DPI_dil-x2", #signal different
+                        "C_P_1_2-DPI_dil-x2_2022_10_04", #increased noise, aquired on another day.
+                        "C_C_1_3-DPI_dil-x2", #signal different and unstable. 
+                        "C_P_1_3-DPI_dil-x2", #signal different, aquired another day 
+                        "C_A_3_4-DPI_dil-x2", #lots of backround, changed signal 
+                        "H_C_1_4-DPI_dil-x4", #signal very different
+                        "H_C_1_7-DPI_dil-x2_27_09_22" , #signal very different, had been thawed many times
+                        "H_A_4_0-DPI_dil-x4" ,
+                        "T_A_1_0-DPI_dil-x2"#had been thaweed many times, signal off
+                        ))
+
+write.csv(flow_density_no, 
+          file = paste0(filepath, "/data/2022-11-30_bacterial_density_flow_cyt_clean_nooutliers.csv"))
+```
+
+
+# Propagule pressure 
+```{r}
+flow_density = read.csv(file = paste0(filepath, "/results/2022-11-30_bacterial_density_flow_cyt_clean_nooutliers.csv"))
+bacterial_density = flow_density %>%
+  filter(Gate == "Bacteria") %>%
+  mutate(Added_Fc7 = factor(Added_Fc7, levels = c("no", "low", "high" )), 
+                                 Treatment = factor(Treatment, levels = c("none", "Phage", "AB")) , 
+                                 T = factor(T, levels = c("C", "P", "A")) )  
+```
+
+# Calculate propagule pressure
+```{r}
+pp = bacterial_density %>%   
+  filter(DPI == 0,  Gate == "Bacteria") %>% 
+  group_by(PP) %>% 
+  summarise(mean_den = (mean(density_cells_mL)), 
+            sd_den = (sd(density_cells_mL)), n = n())
+
+#average increase in cell density - propagule pressure%
+reshape2::melt(data = pp, "PP") %>%
+  dplyr::filter(variable == "mean_den") %>% 
+  dplyr::mutate(control_density = pp %>% dplyr::filter(PP == "C") %>% dplyr::pull(mean_den) ) %>%
+  dplyr::mutate(ratio = value/control_density, 
+                percent = ((value-control_density)/control_density)*100    )
+
+#standard deviation
+reshape2::melt(data = pp, "PP") %>%
+  dplyr::filter(variable == "sd_den") %>% 
+  dplyr::mutate(control_density = pp %>% dplyr::filter(PP == "C") %>% dplyr::pull(sd_den) ) %>%
+  dplyr::mutate(ratio = value/control_density, 
+                percent = ((value-control_density)/control_density)*100    )
+```
+
+# Day 7 
+```{r}
+d7 = bacterial_density %>%   
+  filter(DPI == 7,  Gate == "Bacteria") %>% 
+  group_by(Added_Fc7, Treatment) %>% 
+  summarise(mean_den = (mean(density_cells_mL)), 
+            sd_den = (sd(density_cells_mL)), n = n())
+
+control_density = d7 %>% dplyr::filter(Treatment == "none") %>% dplyr::pull(mean_den)
+
+reshape2::melt(data = d7, c("Treatment","Added_Fc7")) %>%
+  dplyr::filter(variable == "mean_den") %>% 
+  
+  dplyr::mutate(control_density = case_when(Added_Fc7== "no"~control_density[1], 
+                                            Added_Fc7== "low"~control_density[2], 
+                                            Added_Fc7== "high"~control_density[3]) ) %>%
+  dplyr::mutate(ratio_C_t = value/control_density, 
+                ratio_t_C = control_density/value, 
+                percent = ((value-control_density)/control_density)*100    )
+
+```
+
+#Ratios between control and treatments at each sampling day 
+```{r}
+ratios = data.frame()
+for(i in 0:7) {
+  d1 = bacterial_density %>%   
+  filter(DPI == i,  Gate == "Bacteria") %>% 
+  group_by(Added_Fc7, Treatment) %>% 
+  summarise(mean_den = (mean(density_cells_mL)), 
+            sd_den = (sd(density_cells_mL)), n = n())
+  
+  control_density = d1 %>% dplyr::filter(Treatment == "none") %>% 
+    dplyr::pull(mean_den)
+  
+  df = reshape2::melt(data = d1, c("Treatment","Added_Fc7")) %>%
+  dplyr::filter(variable == "mean_den") %>% 
+  dplyr::mutate(control_density = case_when(Added_Fc7== "no"~control_density[1], 
+                                            Added_Fc7== "low"~control_density[2], 
+                                            Added_Fc7== "high"~control_density[3]) ) %>%
+  dplyr::mutate(DPI = i, 
+                ratio_C_t = value/control_density, 
+                ratio_t_C = control_density/value, 
+                percent = ((value-control_density)/control_density)*100)
+  
+  ratios = bind_rows(ratios, df)
+}
+
+ratios %>% 
+  filter(Treatment == "Phage", Added_Fc7 == "no") %>% 
+  mutate( ratio_C_t = round(ratio_C_t,digits =  2) ) %>% 
+  arrange(ratio_C_t)
+
+ratios %>% 
+  filter(Treatment == "AB", Added_Fc7 == "no") %>% 
+  mutate( ratio_C_t = round(ratio_C_t,digits =  2) ) %>% 
+  arrange(ratio_C_t)
+
+ratios %>% 
+  filter(Treatment == "Phage", Added_Fc7 == "low") %>% 
+  mutate( ratio_C_t = round(ratio_C_t,digits =  2) ) %>% 
+  arrange(ratio_C_t)
+
+ratios %>% 
+  filter(Treatment == "AB", Added_Fc7 == "low") %>% 
+  mutate( ratio_C_t = round(ratio_C_t,digits =  2) )# %>% 
+  arrange(ratio_C_t)
+
+ratios %>% 
+  filter(Treatment == "Phage", Added_Fc7 == "high") %>% 
+  mutate( ratio_C_t = round(ratio_C_t,digits =  2) ) #%>% 
+  arrange(ratio_C_t)
+
+ratios %>% 
+  filter(Treatment == "AB", Added_Fc7 == "high") %>% 
+  mutate( ratio_C_t = round(ratio_C_t,digits =  2) )# %>% 
+  arrange(ratio_C_t)
+```

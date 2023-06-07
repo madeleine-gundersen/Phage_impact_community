@@ -1,0 +1,296 @@
+---
+title: "Normalizing dataset"
+---
+
+We have now removed biased sequences (conamination, archea, chloroplast) and undersampled samples (2 samples)
+
+```{r}
+library(phyloseq)
+library(ggplot2)
+```
+
+```{r}
+filepath = "C:/Users/madel/OneDrive - NTNU/Doktorgrad/Project 8 Phage therapy and AB in semi-cont/R-analysis/GitHubScripts"
+filepath_results = paste0(filepath, "/results/", Sys.Date(), "_")
+filepath_figures = paste0(filepath, "/figures/",  Sys.Date(), "_")
+full_experiment = readRDS(file = paste0(filepath,"/rawdata/2023-02-02_Phyloseq_object_unnormalised_16srDNA_wo-controls.RDS"))
+source(paste0(filepath, "/plot.settings_waterphage.R"))
+DNA_full = full_experiment
+```
+
+# Rarefaction curves
+```{r}
+dataset_overview_DNA = data.frame(total_reads = sum(phyloseq::sample_sums(DNA_full)), 
+           max_read = max(phyloseq::sample_sums(DNA_full)), 
+           min_read = min(phyloseq::sample_sums(DNA_full)),
+           average_depth = mean(phyloseq::sample_sums(DNA_full)), 
+           sd_depth = sd(phyloseq::sample_sums(DNA_full)), 
+           n_taxa = ntaxa(DNA_full)) 
+
+p = ranacapa::ggrare(physeq = DNA_full, step = 500,  se = FALSE, color = "Added_Fc7") 
+p + 
+  my.theme +
+  ggh4x::facet_nested(DPI~Treatment) + 
+  ylab("ASV richness") + 
+  xlab("Sequencing depth") + 
+  theme(text = element_text(size = 10), 
+        panel.spacing = unit(0, "lines"), 
+        axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  scale_color_manual(values = cbPalette, labels=c("No" = 'No_Fc7',"Low" = 'Low_Fc7', "High" = 'High_Fc7'), 
+                     name = "Popagule pressure") + 
+  geom_vline(xintercept = 26448, color = cbPalette[4], size  = 1 ) + 
+  theme(strip.background = element_rect(color="transparent", fill="transparent", linetype="solid", size = 1))
+
+ggsave(filename = paste0(filepath_figures, "SF2_16SrDNA_rarefaction-curves_26448.png"), height = 4, width = 6)
+```
+
+## Scaling
+```{r}
+set.seed(3003)
+# scaled data set
+taxa_present = function(x) sum(x)>0 #taxa must have at least 1 read in at least 1 sample
+ntaxa(filter_taxa(DNA_full, taxa_present, prune = TRUE)) #4630 ASVs - confirms that all taxa are observed
+sd(sample_sums(DNA_full))/mean(sample_sums(DNA_full)) #cv = 0.3101376
+
+#Scale to lowest sampling depth 
+composistional = microbiome::transform(DNA_full, transform = "compositional")
+scale = microbiome::transform(composistional, 
+                              transform = "scale", 
+                              scale = min(sample_sums(DNA_full))) #26448 is the lowest sampling depth 
+
+ntaxa(filter_taxa(scale, taxa_present, prune = TRUE)) #4630 taxa
+sd(round(sample_sums(scale), -1))/mean(sample_sums(scale)) #cv = 0
+head(scale@otu_table)[1:6,1:4]
+```
+
+```{r}
+all_rareslopes = data.frame(Sequence_name = DNA_full@sam_data@row.names, 
+                            slope = vector(mode = "integer", 
+                                           length = nrow(DNA_full@sam_data)))
+for (i in 1:nrow(DNA_full@sam_data)) {
+  sample = subset_samples(DNA_full,
+                          Sequence_name == DNA_full@sam_data@row.names[i] )
+  sample_rareslope = vegan::rareslope(t(otu_table(sample)@.Data), sample = 26448-1)
+  all_rareslopes[i,2] = sample_rareslope
+  }
+all_rareslopes$new_detection_every_n_read = 1/all_rareslopes$slope
+all_rareslopes.1 = merge(all_rareslopes, data.frame(sample_data(DNA_full)), by = "Sequence_name")
+all_rareslopes.1 %>% 
+  ggplot(aes(x=DPI, y = slope)) + 
+  geom_point(aes(color = T)) + 
+  my.theme 
+all_rareslopes.1 %>% summarise(av_s = mean(slope),sd_s = sd(slope), av_new = mean(new_detection_every_n_read))
+```
+### rarify
+```{r}
+set.seed(3003)
+#Rarefy scaled data set
+scale_rarefy = rarefy_even_depth(physeq = scale, sample.size = min(sample_sums(scale)), trimOTUs = TRUE) 
+sd(sample_sums(scale_rarefy))/mean(sample_sums(scale_rarefy)) #cv = 0
+ntaxa(filter_taxa(DNA_full, taxa_present, prune = TRUE)) - ntaxa(filter_taxa(scale_rarefy, taxa_present, prune = TRUE)) #69 ASVs removed
+saveRDS(object = scale_rarefy, 
+        file = paste0(filepath_results, "Phyloseq_object_scaled-rarified-26447_16SrDNA") )
+
+head(scale_rarefy@otu_table)[1:4,1:4]
+dataset_overview_rar = data.frame(total_reads = sum(phyloseq::sample_sums(scale_rarefy)), 
+           max_read = max(phyloseq::sample_sums(scale_rarefy)), 
+           min_read = min(phyloseq::sample_sums(scale_rarefy)),
+           average_depth = mean(phyloseq::sample_sums(scale_rarefy)), 
+           sd_depth = sd(phyloseq::sample_sums(scale_rarefy)), 
+                     n_taxa = ntaxa(scale_rarefy)) 
+```
+
+##Effect of normalisation on alpha diversity
+```{r}
+scale_rarefy = readRDS(paste0(filepath, "/rawdata/2023-02-02_Phyloseq_object_scaled-rarified-26447_16SrDNA.RDS"))
+alpha_full = data.frame(sample_data(DNA_full), 
+                        depth = sample_sums(DNA_full), 
+                richness = vegan::renyi(t(as.data.frame(DNA_full@otu_table)), scales = c(0), hill = TRUE),
+                order1 = vegan::renyi(t(as.data.frame(DNA_full@otu_table)), scales = c(1), hill = TRUE),
+                order2 = vegan::renyi(t(as.data.frame(DNA_full@otu_table)), scales = c(2), hill = TRUE)) %>% 
+  reshape2::melt(id = 1:16, variable.name = "Order", value.name = "Diveristy_full" ) 
+
+alpha_rari = data.frame(sample_data(scale_rarefy)[,c(1)], 
+                richness = vegan::renyi(t(as.data.frame(scale_rarefy@otu_table)), scales = c(0), hill = TRUE),
+                order1 = vegan::renyi(t(as.data.frame(scale_rarefy@otu_table)), scales = c(1), hill = TRUE),
+                order2 = vegan::renyi(t(as.data.frame(scale_rarefy@otu_table)), scales = c(2), hill = TRUE)) %>% 
+  reshape2::melt(id = 1, variable.name = "Order", value.name = "Diveristy_rari" ) 
+
+
+alpha_norm = merge(alpha_full, alpha_rari)
+# check that samples are only represented once
+alpha_norm %>% group_by(Sequence_name) %>% summarise(n = n()) %>% arrange(n) #ok
+```
+
+```{r}
+rari_DNA_richnss =
+  alpha_norm %>% 
+  filter(Order %in% c("richness")) %>% 
+  ggplot2::ggplot(aes(x = Diveristy_full, y = Diveristy_rari)) +
+  geom_point(aes(fill = Treatment, shape = as.character(DPI)), size = 2) + 
+  scale_shape_manual("DPI", values = c(21,22,23,24)) + 
+  geom_abline(slope = 1, linetype = "dotted") +   
+  ggpubr::stat_regline_equation(label.y.npc = 1) + 
+  ggpubr::stat_cor(method = "pearson", label.y.npc = 0.9, 
+                   aes(label = paste(..rr.label..)))  + 
+    guides(fill = guide_legend(override.aes = list(shape = 21))) + 
+  my.theme + 
+   ggtitle(label = "ASV richness") + 
+  scale_fill_manual(values = treatment_cols1) + 
+    scale_fill_manual(values = treatment_cols1) + 
+    theme(plot.title = element_text(hjust = 0.5), 
+          plot.subtitle  =  element_text(hjust = 0.5), 
+          strip.background = element_rect(color="transparent", fill="transparent", linetype="solid", size = 1)) + 
+  ylab((expression(Normalised~N[0]))) + 
+  xlab((expression(Full~dataset~N[0])))
+```
+
+
+```{r}
+rari_DNA_o1 =
+  alpha_norm %>% 
+  filter(Order %in% c("order1")) %>% 
+  ggplot2::ggplot(aes(x = Diveristy_full, y = Diveristy_rari)) +
+  geom_point(aes(fill = Treatment, shape = as.character(DPI)), size = 2) + 
+  scale_shape_manual("DPI", values = c(21,22,23,24)) + 
+  geom_abline(slope = 1, linetype = "dotted") +   
+  ggpubr::stat_regline_equation(label.y.npc = 1) + 
+  ggpubr::stat_cor(method = "pearson", label.y.npc = 0.9, 
+                   aes(label = paste(..rr.label..)))  + 
+    guides(fill = guide_legend(override.aes = list(shape = 21))) + 
+  my.theme + 
+   ggtitle(label = "Diversity of order 1") + 
+  scale_fill_manual(values = treatment_cols1) + 
+    scale_fill_manual(values = treatment_cols1) + 
+    theme(plot.title = element_text(hjust = 0.5), 
+          plot.subtitle  =  element_text(hjust = 0.5), 
+          strip.background = element_rect(color="transparent", fill="transparent", linetype="solid", size = 1)) + 
+  ylab((expression(Normalised~N[1]))) + 
+  xlab((expression(Full~dataset~N[1])))
+```
+
+```{r}
+#some samples dont loose anything, some loose many ASVs. Checking if this is related to sequencing depth
+richness = alpha_norm %>% filter(Order == "richness") %>% 
+  mutate(loss_rari =Diveristy_full-Diveristy_rari)
+
+richness %>% 
+  ggplot2::ggplot(aes(x = depth, y = loss_rari)) +
+  geom_point(aes(color = T, shape = PP), size = 2) + 
+  geom_abline(slope = 1, linetype = "dotted") +   
+  my.theme 
+```
+Samples loose more taxa when they have a high sequencing depth. 
+
+
+## Effect on beta diversity 
+### BC
+```{r}
+scale_rarefy = readRDS(paste0(filepath, "/rawdata/2023-02-02_Phyloseq_object_scaled-rarified-26447_16SrDNA.RDS"))
+physeq = DNA_full
+ordination_bray = phyloseq::ordinate(physeq = physeq, method = "PCoA", distance = "bray") 
+plot_bray = phyloseq::plot_ordination(physeq = physeq, ordination = ordination_bray, 
+                                      title = "Bray-Curtis",  axes = c(1,2), justDF = T)
+#full dataset
+plot_bray_full = plot_bray
+evals1_full <- round(ordination_bray$values$Eigenvalues[1] / sum(ordination_bray$values$Eigenvalues) * 100, 2)
+evals2_full <- round(ordination_bray$values$Eigenvalues[2] / sum(ordination_bray$values$Eigenvalues) * 100, 2)
+BC_full = ggplot(plot_bray_full, aes(x=Axis.1, y = Axis.2 ) )  +
+  my.theme +
+  ggtitle("Full Bray-Curtis") + 
+  geom_point(size = 3, aes(shape = as.character(DPI) , fill = Treatment), color = "black") + 
+  scale_shape_manual("DPI", values = c(21,22,23,24, 25)) + 
+  guides(fill = guide_legend(override.aes = list(shape = 21 ))) +
+  scale_fill_manual(values = treatment_cols1) + 
+  scale_color_manual(values = treatment_cols1) + 
+  xlab(paste("PCoA 1 (", evals1_full, "%)", sep = "")) +
+  ylab(paste("PCoA 2 (", evals2_full, "%)", sep = "")) + 
+  theme(plot.title = element_text(hjust = 0.5) )
+```
+
+```{r}
+physeq = scale_rarefy
+ordination_bray = phyloseq::ordinate(physeq = physeq, method = "PCoA", distance = "bray") 
+plot_bray = phyloseq::plot_ordination(physeq = physeq, ordination = ordination_bray, 
+                                      title = "Bray-Curtis",  axes = c(1,2), justDF = T)
+
+#rari 
+plot_bray_rar = plot_bray
+evals1_rar <- round(ordination_bray$values$Eigenvalues[1] / sum(ordination_bray$values$Eigenvalues) * 100, 2)
+evals2_rar <- round(ordination_bray$values$Eigenvalues[2] / sum(ordination_bray$values$Eigenvalues) * 100, 2)
+BC_rar =ggplot(plot_bray_rar, aes(x=Axis.1, y = Axis.2 ) )  +
+  my.theme +
+  ggtitle("Normalised Bray-Curtis") + 
+  geom_point(size = 3, aes(shape = as.character(DPI) , fill = Treatment), color = "black") + 
+  scale_shape_manual("DPI", values = c(21,22,23,24, 25)) + 
+  guides(fill = guide_legend(override.aes = list(shape = 21 ))) +
+  scale_fill_manual(values = treatment_cols1) + 
+  scale_color_manual(values = treatment_cols1) + 
+  xlab(paste("PCoA 1 (", evals1_rar, "%)", sep = "")) +
+  ylab(paste("PCoA 2 (", evals2_rar, "%)", sep = "")) + 
+  theme(plot.title = element_text(hjust = 0.5) )
+```
+
+### Sør
+```{r}
+physeq = DNA_full
+OTU_table = t(as.matrix(physeq@otu_table@.Data) ) 
+sorensen = vegan::vegdist(OTU_table, method = "bray", binary = TRUE) #binary as true makes it Sørensen. 
+ordination_sor = phyloseq::ordinate(physeq = physeq, method = "PCoA", distance = sorensen)
+plot_sor = phyloseq::plot_ordination(physeq = physeq, ordination = ordination_sor, 
+                                   title = "Sørensen", axes = c(1,2), justDF = T) 
+
+#full dataset
+plot_sor_full = plot_sor
+evals1_full <- round(ordination_sor$values$Eigenvalues[1] / sum(ordination_sor$values$Eigenvalues) * 100, 2)
+evals2_full <- round(ordination_sor$values$Eigenvalues[2] / sum(ordination_sor$values$Eigenvalues) * 100, 2)
+Sor_full = ggplot(plot_sor_full, aes(x=Axis.1, y = Axis.2) )  +
+  my.theme +
+  ggtitle("Full Sørensen") + 
+  geom_point(size = 3, aes(shape = as.character(DPI) , fill = Treatment), color = "black") + 
+  scale_shape_manual("DPI", values = c(21,22,23,24, 25)) + 
+  guides(fill = guide_legend(override.aes = list(shape = 21 ))) +
+  scale_fill_manual(values = treatment_cols1) + 
+  scale_color_manual(values = treatment_cols1) + 
+  xlab(paste("PCoA 1 (", evals1_full, "%)", sep = "")) +
+  ylab(paste("PCoA 2 (", evals2_full, "%)", sep = ""))+ 
+  theme(plot.title = element_text(hjust = 0.5) )
+```
+```{r}
+#rari 
+physeq = scale_rarefy
+OTU_table = t(as.matrix(physeq@otu_table@.Data) ) 
+sorensen = vegan::vegdist(OTU_table, method = "bray", binary = TRUE) #binary as true makes it Sørensen. 
+ordination_sor = phyloseq::ordinate(physeq = physeq, method = "PCoA", distance = sorensen)
+plot_sor = phyloseq::plot_ordination(physeq = physeq, ordination = ordination_sor, 
+                                   title = "Sørensen", axes = c(1,2), justDF = T) 
+
+plot_sor_rar = plot_sor
+evals1_rar <- round(ordination_sor$values$Eigenvalues[1] / sum(ordination_sor$values$Eigenvalues) * 100, 2)
+evals2_rar <- round(ordination_sor$values$Eigenvalues[2] / sum(ordination_sor$values$Eigenvalues) * 100, 2)
+Sor_rar = ggplot(plot_sor_rar, aes(x=Axis.1, y = Axis.2 ) )  +
+  my.theme +
+  ggtitle("Normalised Sørensen") + 
+  geom_point(size = 3, aes(shape = as.character(DPI) , fill = Treatment), color = "black") + 
+  scale_shape_manual("DPI", values = c(21,22,23,24, 25)) + 
+  guides(fill = guide_legend(override.aes = list(shape = 21 ))) +
+  scale_fill_manual(values = treatment_cols1) + 
+  scale_color_manual(values = treatment_cols1) + 
+  xlab(paste("PCoA 1 (", evals1_rar, "%)", sep = "")) +
+  ylab(paste("PCoA 2 (", evals2_rar, "%)", sep = "")) + 
+  theme(plot.title = element_text(hjust = 0.5) )
+```
+
+supp figure normalisation
+```{r, fig.height=7, fig.width=6}
+ggpubr::ggarrange(rari_DNA_richnss, rari_DNA_o1,
+  BC_full, BC_rar, 
+  Sor_full, Sor_rar, 
+  ncol = 2, nrow = 3, heights = c(0.7,0.5,0.5),
+  
+  common.legend = T, legend = "right", labels = c("a)", "", "b)", "", "c"))
+
+ggsave(filename = paste0(filepath_figures, "effect_normalisation_DNA.png"), width = 7, height = 8 )
+```
+
+

@@ -1,0 +1,494 @@
+---
+title: "8_replicate similarity"
+---
+
+```{r, message=FALSE}
+library(phyloseq)
+library(ggplot2)
+library(dplyr)
+```
+
+```{r, message=FALSE}
+filepath = "C:/Users/madel/OneDrive - NTNU/Doktorgrad/Project 8 Phage therapy and AB in semi-cont/R-analysis/GitHubScripts"
+filepath_results = paste0(filepath, "/results/", Sys.Date(), "_")
+filepath_figures = paste0(filepath, "/figures/",  Sys.Date(), "_")
+
+physeq = readRDS(file = paste0(filepath,"/rawdata/2023-02-02_Phyloseq_object_unnormalised_16srDNA_wo-controls.RDS"))
+distance_BC_DNA = readRDS(file = paste0(filepath, "/results/2023-02-06_100_iter_Bray_Curtis_dist_DNA.RDS"))
+distance_Sor_DNA = readRDS(file = paste0(filepath, "/results/2023-02-06_100_iter_Sorensen_dist_DNA.RDS"))
+
+source(paste0(filepath, "/plot.settings_waterphage.R"))
+```
+
+#Calculate replicate similarity
+## Bray Curtis
+```{r}
+set.seed(3003)
+dist_matrix = as.matrix(distance_BC_DNA)
+dist_matrix[upper.tri(dist_matrix)] <- NA
+distance_df = reshape2::melt(dist_matrix, varnames = c("Sample_A", "Sample_B"))
+distance_df$value = 1-distance_df$value #converts to similarity
+colnames(distance_df)[3] = "BrayCurtis_sim"
+distance_df = na.omit(distance_df)
+distance_df = distance_df %>% dplyr::filter(Sample_A != Sample_B)
+col_keep = c("Sample", "Extraction", "Rep","DPI", "Sequence_name", "Sample_name", "Added_Fc7", "Treatment")
+metaA = data.frame(sample_data(physeq)) %>% mutate(Sample = Sequence_name) %>% dplyr::select(col_keep)
+colnames(metaA) = paste0(colnames(metaA), "_A") 
+metaB = data.frame(sample_data(physeq)) %>% mutate(Sample = Sequence_name) %>% dplyr::select(col_keep)
+colnames(metaB) = paste0(colnames(metaB), "_B") 
+distance_df_a = merge(distance_df, metaA, by = "Sample_A")
+distance_df_both = merge(distance_df_a, metaB, by = "Sample_B")
+#We need to add the time 0 samples to all groups
+day0_none = distance_df_both %>% 
+  filter(Added_Fc7_A == Added_Fc7_B, Treatment_A == Treatment_B, Extraction_A == Extraction_B) %>%
+  filter(DPI_A == DPI_B, DPI_A == 0 ) %>% 
+  filter(Sample_name_A != "JW-1-D-0", Sample_name_B != "JW-1-D-0", 
+         Sample_name_A != "JW-2-D-0", Sample_name_B != "JW-2-D-0") 
+day0_phage = day0_none %>% mutate(Treatment_A = "Phage", Treatment_B = "Phage")
+day0_ab = day0_none %>% mutate(Treatment_A = "AB", Treatment_B = "AB")
+distance_df_both_with0 = bind_rows(distance_df_both, day0_phage, day0_ab)
+distance_df_both_plot = distance_df_both_with0 %>% 
+  mutate(treatment_comp = paste0(Treatment_A, "_", Treatment_B), 
+         pp_comp = paste0(Added_Fc7_A, "_", Added_Fc7_B), 
+         day_comp = paste0(DPI_A, "_", DPI_B)) %>% 
+   mutate(pp_comp = 
+             case_when(pp_comp == "No_High" ~ "No_High", 
+                       pp_comp == "No_Low" ~ "No_Low", 
+                       pp_comp == "High_No" ~ "No_High", 
+                       pp_comp == "High_Low" ~ "Low_High", 
+                       pp_comp == "Low_No" ~ "No_Low", 
+                        TRUE ~ pp_comp) ) %>% 
+    mutate(treatment_comp = 
+             case_when(treatment_comp == "AB_None" ~ "None_AB", 
+                       treatment_comp == "AB_Phage" ~ "Phage_AB", 
+                       treatment_comp == "Phage_None" ~ "None_Phage", 
+                        TRUE ~ treatment_comp) )%>% 
+      mutate(day_comp = 
+             case_when(day_comp == "1_0" ~ "0_1", 
+                       day_comp == "3_0" ~ "0_3", 
+                       day_comp == "7_0" ~ "0_7", 
+                       day_comp == "7_1" ~ "1_7", 
+                        TRUE ~ day_comp) ) %>% 
+        mutate(withinbetweenday = 
+             case_when(DPI_A == DPI_B ~ "same_day", 
+                        TRUE ~ "between_day") )
+distance_df_both_plot1 = distance_df_both_plot %>%
+  mutate(treatment_comp = factor(treatment_comp, levels = c("None_None", "Phage_Phage", 
+                                                            "None_Phage", "AB_AB", "None_AB", "Phage_AB"))) %>% 
+  mutate(Treatment_A = factor(Treatment_A, levels = c("None", "Phage", "AB")), 
+         Treatment_B = factor(Treatment_B, levels = c("None", "Phage", "AB"))  )
+bc_rep_similarity = distance_df_both_plot1 %>% 
+    filter(Sample_name_A != "JW-1-D-0", Sample_name_B != "JW-1-D-0", 
+         Sample_name_A != "JW-2-D-0", Sample_name_B != "JW-2-D-0") 
+
+rep_sim_DNA_bray = bc_rep_similarity %>% 
+   filter(Added_Fc7_A == Added_Fc7_B, Treatment_A == Treatment_B, Extraction_A == Extraction_B) %>%
+  filter(DPI_A == DPI_B) %>%
+  mutate(Rep_comp = paste0(Rep_A, "_vs_",Rep_B)) %>%
+  mutate(Rep_comp = case_when(Rep_comp == "2_vs_1" ~ "1_vs_2",
+                              Rep_comp == "3_vs_1" ~ "1_vs_3",
+                              Rep_comp == "4_vs_1" ~ "1_vs_4",
+                              Rep_comp == "5_vs_1" ~ "1_vs_5",
+                              Rep_comp == "4_vs_2" ~ "2_vs_4",
+                              Rep_comp == "3_vs_2" ~ "2_vs_3",
+                              
+                              Rep_comp == "5_vs_2" ~ "2_vs_5",
+                              Rep_comp == "5_vs_4" ~ "4_vs_5",
+                              Rep_comp == "5_vs_3" ~ "3_vs_5",
+                              Rep_comp == "4_vs_3" ~ "3_vs_4",
+                              T ~ Rep_comp)) 
+rep_sim_DNA.2_bray = rep_sim_DNA_bray %>% 
+  dplyr::select(BrayCurtis_sim,DPI_B, Added_Fc7_B, Treatment_B , Sample_name_A, Sample_name_B, Extraction_A, Rep_comp) %>% 
+  dplyr::rename(DPI = DPI_B, Added_Fc7 = Added_Fc7_B, Treatment = Treatment_B, Extraction = Extraction_A) 
+```
+
+##Sørensen rep similarity
+```{r}
+set.seed(3003)
+dist_matrix = as.matrix(distance_Sor_DNA)
+dist_matrix[upper.tri(dist_matrix)] <- NA
+distance_df = reshape2::melt(dist_matrix, varnames = c("Sample_A", "Sample_B"))
+distance_df$value = 1-distance_df$value #converts to similarity
+colnames(distance_df)[3] = "Sorensen_sim"
+distance_df = na.omit(distance_df)
+distance_df = distance_df %>% dplyr::filter(Sample_A != Sample_B)
+col_keep = c("Sample", "Extraction", "Rep","DPI", "Sequence_name", "Sample_name", "Added_Fc7", "Treatment")
+metaA = data.frame(sample_data(physeq)) %>% mutate(Sample = Sequence_name) %>% dplyr::select(col_keep)
+colnames(metaA) = paste0(colnames(metaA), "_A") 
+metaB = data.frame(sample_data(physeq)) %>% mutate(Sample = Sequence_name) %>% dplyr::select(col_keep)
+colnames(metaB) = paste0(colnames(metaB), "_B") 
+distance_df_a = merge(distance_df, metaA, by = "Sample_A")
+distance_df_both = merge(distance_df_a, metaB, by = "Sample_B")
+#We need to add the time 0 samples to all groups
+day0_none = distance_df_both %>% 
+  filter(Added_Fc7_A == Added_Fc7_B, Treatment_A == Treatment_B, Extraction_A == Extraction_B) %>%
+  filter(DPI_A == DPI_B, DPI_A == 0 ) %>% 
+  filter(Sample_name_A != "JW-1-D-0", Sample_name_B != "JW-1-D-0", 
+         Sample_name_A != "JW-2-D-0", Sample_name_B != "JW-2-D-0") 
+day0_phage = day0_none %>% mutate(Treatment_A = "Phage", Treatment_B = "Phage")
+day0_ab = day0_none %>% mutate(Treatment_A = "AB", Treatment_B = "AB")
+distance_df_both_with0 = bind_rows(distance_df_both, day0_phage, day0_ab)
+
+distance_df_both_plot = distance_df_both_with0 %>% 
+  mutate(treatment_comp = paste0(Treatment_A, "_", Treatment_B), 
+         pp_comp = paste0(Added_Fc7_A, "_", Added_Fc7_B), 
+         day_comp = paste0(DPI_A, "_", DPI_B)) %>% 
+  mutate(pp_comp = 
+             case_when(pp_comp == "No_High" ~ "No_High", 
+                       pp_comp == "No_Low" ~ "No_Low", 
+                       pp_comp == "High_No" ~ "No_High", 
+                       pp_comp == "High_Low" ~ "Low_High", 
+                       pp_comp == "Low_No" ~ "No_Low", 
+                        TRUE ~ pp_comp) ) %>% 
+    mutate(treatment_comp = 
+             case_when(treatment_comp == "AB_None" ~ "None_AB", 
+                       treatment_comp == "AB_Phage" ~ "Phage_AB", 
+                       treatment_comp == "Phage_None" ~ "None_Phage", 
+                        TRUE ~ treatment_comp) )%>% 
+      mutate(day_comp = 
+             case_when(day_comp == "1_0" ~ "0_1", 
+                       day_comp == "3_0" ~ "0_3", 
+                       day_comp == "7_0" ~ "0_7", 
+                       day_comp == "7_1" ~ "1_7", 
+                        TRUE ~ day_comp) ) %>% 
+        mutate(withinbetweenday = 
+             case_when(DPI_A == DPI_B ~ "same_day", 
+                        TRUE ~ "between_day") )
+distance_df_both_plot1 = distance_df_both_plot %>%
+  mutate(treatment_comp = factor(treatment_comp, levels = c("None_None", "Phage_Phage", 
+                                                            "None_Phage", "AB_AB", "None_AB", "Phage_AB"))) %>% 
+  mutate(Treatment_A = factor(Treatment_A, levels = c("None", "Phage", "AB")), 
+         Treatment_B = factor(Treatment_B, levels = c("None", "Phage", "AB"))  )
+
+sor_rep_similarity = distance_df_both_plot1 %>% 
+    filter(Sample_name_A != "JW-1-D-0", Sample_name_B != "JW-1-D-0", 
+         Sample_name_A != "JW-2-D-0", Sample_name_B != "JW-2-D-0") 
+
+rep_sim_DNA_sor = sor_rep_similarity %>% 
+   filter(Added_Fc7_A == Added_Fc7_B, Treatment_A == Treatment_B, Extraction_A == Extraction_B) %>%
+  filter(DPI_A == DPI_B,
+         Extraction_A == "DNA") %>%
+  
+  
+  mutate(Rep_comp = paste0(Rep_A, "_vs_",Rep_B)) %>%
+  mutate(Rep_comp = case_when(Rep_comp == "2_vs_1" ~ "1_vs_2",
+                              Rep_comp == "3_vs_1" ~ "1_vs_3",
+                              Rep_comp == "4_vs_1" ~ "1_vs_4",
+                              Rep_comp == "5_vs_1" ~ "1_vs_5",
+                              Rep_comp == "4_vs_2" ~ "2_vs_4",
+                              Rep_comp == "3_vs_2" ~ "2_vs_3",
+                              
+                              Rep_comp == "5_vs_2" ~ "2_vs_5",
+                              Rep_comp == "5_vs_4" ~ "4_vs_5",
+                              Rep_comp == "5_vs_3" ~ "3_vs_5",
+                              Rep_comp == "4_vs_3" ~ "3_vs_4",
+                              T ~ Rep_comp)) 
+rep_sim_DNA.2_sor = rep_sim_DNA_sor %>% 
+  dplyr::select(Sorensen_sim,DPI_B, Added_Fc7_B, Treatment_B , Sample_name_A, Sample_name_B, Extraction_A, Rep_comp) %>% 
+  dplyr::rename(DPI = DPI_B, Added_Fc7 = Added_Fc7_B, Treatment = Treatment_B, Extraction = Extraction_A) 
+```
+
+#Model replicate similarity change 
+## lmer
+the variance explained by the microcosm comparison has lower variance than the residuals. Therefore switchin to a unmixed linear model
+```{r}
+# rep_sim_DNA
+# linear = lmerTest::lmer(formula = BrayCurtis_sim ~ DPI * Treatment * Added_Fc7 +
+#                           (1 + DPI| Rep_comp:Treatment), #random effect; each microcosm hasa different intercept and varying slopes
+#             data = rep_sim_DNA.2_bray)
+# summary(linear)
+# anova(linear)
+# hist(resid(linear))
+```
+
+## lm
+the variance explained by the microcosm comparison has lower variance than the residuals. Therefore switchin to a linear model
+```{r}
+set.seed(3003)
+linear_DNA_bray = lm(formula = BrayCurtis_sim ~ DPI * Treatment * Added_Fc7, 
+            data = rep_sim_DNA.2_bray)
+
+summary(linear_DNA_bray)
+anova(linear_DNA_bray)
+hist(resid(linear_DNA_bray))
+```
+
+```{r}
+set.seed(3003)
+model_DNA_bray = linear_DNA_bray
+coeffs = coefficients(model_DNA_bray) %>% data.frame() %>% rename(Estimate = ".")
+coeffs$Coefficients = rownames(coeffs)
+conf_int = confint(model_DNA_bray) %>% data.frame() %>% rename(Lower = "X2.5..", Upper = "X97.5..")
+conf_int$Coefficients = rownames(conf_int)
+
+rates_DNA_Bray = data.frame(group = c("No_None", "No_Phage", "No_AB", 
+                     "Low_None", "Low_Phage", "Low_AB", 
+                     "High_None", "High_Phage", "High_AB"), 
+           rate = c(sum(coeffs %>% filter(Coefficients %in% c("DPI")) %>%  
+                          pull(Estimate)), 
+                    sum(coeffs %>% filter(Coefficients %in% c("DPI","DPI:TreatmentPhage" )) %>%  
+                          pull(Estimate)),
+                    sum(coeffs %>% filter(Coefficients %in% c("DPI", "DPI:TreatmentAB")) %>%  
+                          pull(Estimate)), 
+                    
+                    sum(coeffs %>% filter(Coefficients %in% c("DPI", "DPI:Added_Fc7Low")) %>%  
+                          pull(Estimate)), 
+                    sum(coeffs %>% filter(Coefficients %in% c("DPI","DPI:TreatmentPhage" , 
+                                                              "DPI:Added_Fc7Low", "DPI:TreatmentPhage:Added_Fc7Low")) %>%  
+                          pull(Estimate)),
+                    sum(coeffs %>% filter(Coefficients %in% c("DPI", "DPI:TreatmentAB", "DPI:Added_Fc7Low",
+                                                              "DPI:TreatmentAB:Added_Fc7Low")) %>%  
+                          pull(Estimate)), 
+                    
+                    sum(coeffs %>% filter(Coefficients %in% c("DPI", "DPI:Added_Fc7High")) %>%  
+                          pull(Estimate)), 
+                    sum(coeffs %>% filter(Coefficients %in% c("DPI","DPI:TreatmentPhage" , 
+                                                              "DPI:Added_Fc7High", "DPI:TreatmentPhage:Added_Fc7High")) %>% 
+                          pull(Estimate)),
+                    sum(coeffs %>% filter(Coefficients %in% c("DPI", "DPI:TreatmentAB", "DPI:Added_Fc7High", 
+                                                              "DPI:TreatmentAB:Added_Fc7High")) %>%  
+                          pull(Estimate))), 
+           Lower = c(sum(conf_int %>% filter(Coefficients %in% c("DPI")) %>%  
+                          pull(Lower)), 
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI","DPI:TreatmentPhage" )) %>%  
+                          pull(Lower)),
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI", "DPI:TreatmentAB")) %>%  
+                          pull(Lower)), 
+                    
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI", "DPI:Added_Fc7Low")) %>%  
+                          pull(Lower)), 
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI","DPI:TreatmentPhage" , 
+                                                              "DPI:Added_Fc7Low", "DPI:TreatmentPhage:Added_Fc7Low")) %>%  
+                          pull(Lower)),
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI", "DPI:TreatmentAB", "DPI:Added_Fc7Low",
+                                                              "DPI:TreatmentAB:Added_Fc7Low")) %>%  
+                          pull(Lower)), 
+                    
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI", "DPI:Added_Fc7High")) %>%  
+                          pull(Lower)), 
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI","DPI:TreatmentPhage" , 
+                                                              "DPI:Added_Fc7High", "DPI:TreatmentPhage:Added_Fc7High")) %>% 
+                          pull(Lower)),
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI", "DPI:TreatmentAB", "DPI:Added_Fc7High", 
+                                                              "DPI:TreatmentAB:Added_Fc7High")) %>%  
+                          pull(Lower))), 
+           
+            Upper = c(sum(conf_int %>% filter(Coefficients %in% c("DPI")) %>%  
+                          pull(Upper)), 
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI","DPI:TreatmentPhage" )) %>%  
+                          pull(Upper)),
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI", "DPI:TreatmentAB")) %>%  
+                          pull(Upper)), 
+                    
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI", "DPI:Added_Fc7Low")) %>%  
+                          pull(Upper)), 
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI","DPI:TreatmentPhage" , 
+                                                              "DPI:Added_Fc7Low", "DPI:TreatmentPhage:Added_Fc7Low")) %>%  
+                          pull(Upper)),
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI", "DPI:TreatmentAB", "DPI:Added_Fc7Low",
+                                                              "DPI:TreatmentAB:Added_Fc7Low")) %>%  
+                          pull(Upper)), 
+                    
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI", "DPI:Added_Fc7High")) %>%  
+                          pull(Upper)), 
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI","DPI:TreatmentPhage" , 
+                                                              "DPI:Added_Fc7High", "DPI:TreatmentPhage:Added_Fc7High")) %>% 
+                          pull(Upper)),
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI", "DPI:TreatmentAB", "DPI:Added_Fc7High", 
+                                                              "DPI:TreatmentAB:Added_Fc7High")) %>%  
+                          pull(Upper)))) 
+```
+
+
+
+#Sørensen model 
+## lm
+the variance explained by the microcosm comparison has lower variance than the residuals. Therefore switchin to a linear model
+```{r}
+set.seed(3003)
+linear_DNA_sor = lm(formula = Sorensen_sim ~ DPI * Treatment * Added_Fc7, 
+            data = rep_sim_DNA.2_sor)
+
+summary(linear_DNA_sor)
+anova(linear_DNA_sor)
+hist(resid(linear_DNA_sor))
+```
+
+```{r}
+set.seed(3003)
+model_DNA_sor = linear_DNA_sor
+coeffs = coefficients(model_DNA_sor) %>% data.frame() %>% rename(Estimate = ".")
+coeffs$Coefficients = rownames(coeffs)
+conf_int = confint(model_DNA_sor) %>% data.frame() %>% rename(Lower = "X2.5..", Upper = "X97.5..")
+conf_int$Coefficients = rownames(conf_int)
+
+rates_DNA_sor = data.frame(group = c("No_None", "No_Phage", "No_AB", 
+                     "Low_None", "Low_Phage", "Low_AB", 
+                     "High_None", "High_Phage", "High_AB"), 
+           rate = c(sum(coeffs %>% filter(Coefficients %in% c("DPI")) %>%  
+                          pull(Estimate)), 
+                    sum(coeffs %>% filter(Coefficients %in% c("DPI","DPI:TreatmentPhage" )) %>%  
+                          pull(Estimate)),
+                    sum(coeffs %>% filter(Coefficients %in% c("DPI", "DPI:TreatmentAB")) %>%  
+                          pull(Estimate)), 
+                    
+                    sum(coeffs %>% filter(Coefficients %in% c("DPI", "DPI:Added_Fc7Low")) %>%  
+                          pull(Estimate)), 
+                    sum(coeffs %>% filter(Coefficients %in% c("DPI","DPI:TreatmentPhage" , 
+                                                              "DPI:Added_Fc7Low", "DPI:TreatmentPhage:Added_Fc7Low")) %>%  
+                          pull(Estimate)),
+                    sum(coeffs %>% filter(Coefficients %in% c("DPI", "DPI:TreatmentAB", "DPI:Added_Fc7Low",
+                                                              "DPI:TreatmentAB:Added_Fc7Low")) %>%  
+                          pull(Estimate)), 
+                    
+                    sum(coeffs %>% filter(Coefficients %in% c("DPI", "DPI:Added_Fc7High")) %>%  
+                          pull(Estimate)), 
+                    sum(coeffs %>% filter(Coefficients %in% c("DPI","DPI:TreatmentPhage" , 
+                                                              "DPI:Added_Fc7High", "DPI:TreatmentPhage:Added_Fc7High")) %>% 
+                          pull(Estimate)),
+                    sum(coeffs %>% filter(Coefficients %in% c("DPI", "DPI:TreatmentAB", "DPI:Added_Fc7High", 
+                                                              "DPI:TreatmentAB:Added_Fc7High")) %>%  
+                          pull(Estimate))), 
+           Lower = c(sum(conf_int %>% filter(Coefficients %in% c("DPI")) %>%  
+                          pull(Lower)), 
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI","DPI:TreatmentPhage" )) %>%  
+                          pull(Lower)),
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI", "DPI:TreatmentAB")) %>%  
+                          pull(Lower)), 
+                    
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI", "DPI:Added_Fc7Low")) %>%  
+                          pull(Lower)), 
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI","DPI:TreatmentPhage" , 
+                                                              "DPI:Added_Fc7Low", "DPI:TreatmentPhage:Added_Fc7Low")) %>%  
+                          pull(Lower)),
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI", "DPI:TreatmentAB", "DPI:Added_Fc7Low",
+                                                              "DPI:TreatmentAB:Added_Fc7Low")) %>%  
+                          pull(Lower)), 
+                    
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI", "DPI:Added_Fc7High")) %>%  
+                          pull(Lower)), 
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI","DPI:TreatmentPhage" , 
+                                                              "DPI:Added_Fc7High", "DPI:TreatmentPhage:Added_Fc7High")) %>% 
+                          pull(Lower)),
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI", "DPI:TreatmentAB", "DPI:Added_Fc7High", 
+                                                              "DPI:TreatmentAB:Added_Fc7High")) %>%  
+                          pull(Lower))), 
+           
+            Upper = c(sum(conf_int %>% filter(Coefficients %in% c("DPI")) %>%  
+                          pull(Upper)), 
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI","DPI:TreatmentPhage" )) %>%  
+                          pull(Upper)),
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI", "DPI:TreatmentAB")) %>%  
+                          pull(Upper)), 
+                    
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI", "DPI:Added_Fc7Low")) %>%  
+                          pull(Upper)), 
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI","DPI:TreatmentPhage" , 
+                                                              "DPI:Added_Fc7Low", "DPI:TreatmentPhage:Added_Fc7Low")) %>%  
+                          pull(Upper)),
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI", "DPI:TreatmentAB", "DPI:Added_Fc7Low",
+                                                              "DPI:TreatmentAB:Added_Fc7Low")) %>%  
+                          pull(Upper)), 
+                    
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI", "DPI:Added_Fc7High")) %>%  
+                          pull(Upper)), 
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI","DPI:TreatmentPhage" , 
+                                                              "DPI:Added_Fc7High", "DPI:TreatmentPhage:Added_Fc7High")) %>% 
+                          pull(Upper)),
+                    sum(conf_int %>% filter(Coefficients %in% c("DPI", "DPI:TreatmentAB", "DPI:Added_Fc7High", 
+                                                              "DPI:TreatmentAB:Added_Fc7High")) %>%  
+                          pull(Upper)))) 
+```
+
+
+#Replicate rate plot
+```{r}
+rates_DNA_Bray$distance = "Bray-Curtis"
+rates_DNA_sor$distance = "Sørensen"
+rates = bind_rows(rates_DNA_Bray, rates_DNA_sor) %>% 
+  tidyr::separate(group, sep = "_", into = c("Added_Fc7", "Treatment")) %>% 
+  mutate(Added_Fc7 = factor(Added_Fc7, levels = c("No", "Low", "High")), 
+         Added_Fc7 = case_when(Added_Fc7 == "No" ~ "No-Fc7", 
+                                      Added_Fc7 == "Low" ~ "Low-Fc7", 
+                                      Added_Fc7 == "High" ~ "High-Fc7") )  %>%
+  mutate(Added_Fc7 = factor(Added_Fc7, levels = c("No-Fc7", "Low-Fc7", "High-Fc7" )), 
+         Treatment = factor(Treatment, levels = c("None", "Phage", "AB" ))) 
+pd = position_dodge(0.5)
+rates %>%
+  ggplot(aes(x=Added_Fc7, y = rate,  fill =Treatment, color =Treatment , shape = Treatment)) + 
+  my.theme + 
+  geom_errorbar(aes(ymin=Lower, ymax=Upper, color =Treatment), width=.4,position=pd, size = 0.7)+
+  annotate(geom = "rect", ymin = -Inf, ymax  = 0, xmax = Inf, xmin = -Inf, fill = "grey88", alpha = 0.4) + 
+  geom_point(size = 4, position = pd, color = "black") + 
+  scale_fill_manual(values = c("#A4B9EB", "#D1EBA5", "#EB9D8D")) + 
+  scale_color_manual(values = c("#A4B9EB", "#D1EBA5", "#EB9D8D")) + 
+  scale_shape_manual(values = c(21,24,25)) +
+  facet_wrap(~distance, scales = "free") + 
+  ylab("Replicate similarity rate")  + 
+  theme(axis.title.x = element_blank())
+
+
+ggsave(filename = paste0(filepath_figures, "Figure7_Replicate-similarity-rate.pdf"), width = 180, height = 60, units = "mm")
+clipr::write_clip(rates %>% mutate(rate = round(rate, 3)))
+```
+
+```{r}
+rates %>% 
+  tidyr::spread(value = rate, key = Treatment) %>% 
+  dplyr::mutate(phage_diff = none-Phage, ab_diff = none - AB) %>% 
+  dplyr::group_by(Added_Fc7) %>% 
+  dplyr::summarise(mean_p = round(mean(phage_diff),4), 
+                   mean_ab = round(mean(ab_diff),4))
+
+rates %>% select(distance, Extraction, Added_Fc7, Treatment, rate) %>% 
+  tidyr::spread(value = rate, key = Treatment) %>% 
+  dplyr::mutate(phage_diff = none-Phage, ab_diff = none - AB) %>% 
+  dplyr::group_by(Added_Fc7) %>% filter(Added_Fc7 == "no")
+  dplyr::summarise(mean_p = round(mean(phage_diff),4), 
+                   mean_ab = round(mean(ab_diff),4))
+  
+rates %>% select(distance, Extraction, Added_Fc7, Treatment, rate) %>% 
+  tidyr::spread(value = rate, key = Treatment) %>% 
+  dplyr::group_by(distance, Extraction, Added_Fc7,  ) %>%
+  dplyr::summarise(mean_none= round(mean(none),3), 
+                   mean_p = round(mean(Phage),3), 
+                   mean_ab = round(mean(AB),3))
+```
+
+
+Supplementary figure rep similarity
+```{r}
+plot_df_rep_sim = bind_rows(
+bc_rep_similarity %>% mutate(Similarity = BrayCurtis_sim, distance = "Bray-Curtis") %>% select(!BrayCurtis_sim) , 
+sor_rep_similarity %>% mutate(Similarity = Sorensen_sim, distance = "Sørensen") %>% select(!Sorensen_sim) ) 
+```
+```{r}
+plot_df_rep_sim %>% 
+ filter(Added_Fc7_A == Added_Fc7_B, Treatment_A == Treatment_B, Extraction_A == Extraction_B) %>%
+  filter(DPI_A == DPI_B) %>%
+   mutate(Added_Fc7_A = factor(Added_Fc7_A, levels = c("No", "Low", "High")), 
+         Added_Fc7_A = case_when(Added_Fc7_A == "No" ~ "No-Fc7", 
+                                      Added_Fc7_A == "Low" ~ "Low-Fc7", 
+                                      Added_Fc7_A == "High" ~ "High-Fc7") )  %>%
+  mutate(Added_Fc7_A = factor(Added_Fc7_A, levels = c("No-Fc7", "Low-Fc7", "High-Fc7" ))) %>%
+
+  ggplot(aes(x=DPI_A, y = Similarity, fill = Treatment_A, color = Treatment_A)) + 
+  my.theme + 
+  theme(
+    strip.placement = "outside", 
+    strip.background = element_rect(color="transparent", fill="transparent", linetype="solid", size = 1) ) + 
+  scale_fill_manual("Treatment", values = treatment_cols1 ) + 
+  scale_color_manual("Treatment", values = treatment_cols1) +
+  guides(fill = guide_legend(override.aes = list(shape = 21 ))) +
+  facet_grid(distance  ~  Added_Fc7_A, switch = "y", scales = "free") + 
+  geom_smooth(method = "lm", formula = 'y~x', size = 1, 
+              #color = "grey20", 
+              se = FALSE) + 
+  geom_point(size = 2, color = "black", shape = 21) + 
+  ylab("Replicate similarity") + 
+  xlab("DPI")
+
+
+ggsave(filename = paste0(filepath_figures, "SF3_Replicate-similarity-time.pdf"), width = 180, height = 100, units = "mm")
+```
+

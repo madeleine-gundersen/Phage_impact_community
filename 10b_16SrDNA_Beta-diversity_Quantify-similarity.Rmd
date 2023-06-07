@@ -1,0 +1,271 @@
+---
+title: "Beta diversity"
+---
+
+```{r, message=FALSE}
+library(phyloseq)
+library(ggplot2)
+library(dplyr)
+```
+
+```{r, message=FALSE}
+filepath = "C:/Users/madel/OneDrive - NTNU/Doktorgrad/Project 8 Phage therapy and AB in semi-cont/R-analysis/GitHubScripts"
+filepath_results = paste0(filepath, "/results/", Sys.Date(), "_")
+filepath_figures = paste0(filepath, "/figures/",  Sys.Date(), "_")
+
+physeq = readRDS(file = paste0(filepath,"/rawdata/2023-02-02_Phyloseq_object_unnormalised_16srDNA_wo-controls.RDS"))
+distance_BC_DNA = readRDS(file = paste0(filepath, "/results/2023-02-06_100_iter_Bray_Curtis_dist_DNA.RDS"))
+distance_Sor_DNA = readRDS(file = paste0(filepath, "/results/2023-02-06_100_iter_Sorensen_dist_DNA.RDS"))
+
+source(paste0(filepath, "/plot.settings_waterphage.R"))
+source(paste0(filepath, "/conf_boxplot.R"))
+```
+
+#Bray Curtis Quantifying beta diveristy 
+```{r}
+dist_matrix = as.matrix(distance_BC_DNA)
+dist_matrix[upper.tri(dist_matrix)] <- NA
+distance_df_DNA_BC = reshape2::melt(dist_matrix, varnames = c("Sample_A", "Sample_B"))
+distance_df_DNA_BC$indice = "Bray-Curtis"
+
+dist_matrix = as.matrix(distance_Sor_DNA)
+dist_matrix[upper.tri(dist_matrix)] <- NA
+distance_df_DNA_Sor = reshape2::melt(dist_matrix, varnames = c("Sample_A", "Sample_B"))
+distance_df_DNA_Sor$indice = "Sørensen"
+
+distance_df = dplyr::bind_rows(distance_df_DNA_BC, distance_df_DNA_Sor)
+distance_df$value = 1-distance_df$value #converts to similarity
+colnames(distance_df)[3] = "Similarity"
+distance_df = na.omit(distance_df)
+distance_df = distance_df %>% dplyr::filter(Sample_A != Sample_B)
+col_keep = c("Sample", "Extraction", "Rep","DPI", "Sequence_name", "Sample_name", "Added_Fc7", "Treatment")
+metaA = data.frame(sample_data(physeq)) %>% mutate(Sample = Sequence_name) %>% dplyr::select(col_keep)
+colnames(metaA) = paste0(colnames(metaA), "_A") 
+metaB = data.frame(sample_data(physeq)) %>% mutate(Sample = Sequence_name) %>% dplyr::select(col_keep)
+colnames(metaB) = paste0(colnames(metaB), "_B") 
+distance_df_a = merge(distance_df, metaA, by = "Sample_A")
+distance_df_both = merge(distance_df_a, metaB, by = "Sample_B")
+
+distance_df_both_plot = distance_df_both %>% 
+  mutate(treatment_comp = paste0(Treatment_A, "_", Treatment_B), 
+         pp_comp = paste0(Added_Fc7_A, "_", Added_Fc7_B), 
+         day_comp = paste0(DPI_A, "_", DPI_B)) %>% 
+  mutate(pp_comp = 
+             case_when(pp_comp == "No_High" ~ "No_High", 
+                       pp_comp == "No_Low" ~ "No_Low", 
+                       pp_comp == "High_No" ~ "No_High", 
+                       pp_comp == "High_Low" ~ "Low_High", 
+                       pp_comp == "Low_No" ~ "No_Low", 
+                        TRUE ~ pp_comp) ) %>% 
+    mutate(treatment_comp = 
+             case_when(treatment_comp == "AB_None" ~ "None_AB", 
+                       treatment_comp == "AB_Phage" ~ "Phage_AB", 
+                       treatment_comp == "Phage_None" ~ "None_Phage", 
+                        TRUE ~ treatment_comp) ) %>% 
+      mutate(day_comp = 
+             case_when(day_comp == "1_0" ~ "0_1", 
+                       day_comp == "3_0" ~ "0_3", 
+                       day_comp == "7_0" ~ "0_7", 
+                       day_comp == "7_1" ~ "1_7", 
+                        TRUE ~ day_comp) ) %>% 
+        mutate(withinbetweenday = 
+             case_when(DPI_A == DPI_B ~ "same_day", 
+                        TRUE ~ "between_day") )
+
+distance_df_both_plot1 = distance_df_both_plot %>%
+  mutate(treatment_comp = factor(treatment_comp, levels = c("None_None", "Phage_Phage", 
+                                                            "None_Phage", "AB_AB", "None_AB", "Phage_AB")))
+```
+
+## Only control vs treatment
+```{r}
+plot_DF = distance_df_both_plot1 %>% 
+  filter(DPI_A == DPI_B, Added_Fc7_A == Added_Fc7_B, DPI_A != 0) %>% 
+  filter(treatment_comp %in% c("None_Phage", "None_AB") ) %>%
+  mutate(comp = case_when(Treatment_A == Treatment_B~ "a_within_treatment", T~"between"))
+
+comp_plot =
+
+plot_DF %>%  
+  ggplot2::ggplot(aes(x = treatment_comp, y = Similarity, 
+                      shape = treatment_comp,
+                      fill = treatment_comp)) + 
+  my.theme +   
+  theme(panel.spacing.x = unit(0, "lines")) + 
+  guides(fill = guide_legend(override.aes = list(size = 3)), 
+         shape = guide_legend(override.aes = list(size = 3))) + 
+  scale_fill_manual("Treatment comparison", labels = c("None vs Phage", "None vs AB"),
+                    values = c( None_Phage = "#D1EBA5", None_AB = "#EB9D8D") )  + 
+
+  
+  scale_shape_manual("Treatment comparison", 
+                     values = c( None_Phage = 21, None_AB = 24)  , 
+                     labels = c("None vs Phage", "None vs AB")) + 
+  
+  ggh4x::facet_nested(indice~DPI_A+ Added_Fc7_A, scales = "free_x", switch = "both") +
+  
+  theme(plot.background  = element_rect(fill = "white",colour = NA), 
+        axis.text.x = element_blank(), axis.ticks.x = element_blank(), axis.title.x = element_blank(), 
+        legend.position = "right",
+        strip.placement.y = "outside",
+        strip.background.y = element_rect(color="transparent", fill="transparent", linetype="solid", size = 1),
+        plot.margin=unit(c(5,10,0,10),"mm")) +  #c(top, right, bottom, left)) + 
+  
+  scale_x_discrete(labels= plot_DF$treatment_comp ) + 
+  
+  stat_summary(fun.data = conf3, 
+               position = position_dodge(width = 1),
+               color = "black", 
+               aes(fill = treatment_comp), 
+               geom = "boxplot", 
+               alpha = 0.9, 
+               show.legend = F) +
+  geom_point(size = 1.5, position = position_dodge(width = 1))  
+```
+
+```{r}
+plot_DF %>% 
+  group_by(day_comp, pp_comp, treatment_comp, indice) %>% 
+  summarise(n=n())
+```
+
+```{r, fig.width=180/25.4, fig.height=155/25.4}
+#run BC ordination scripts in 13a
+DNAw = 0.3479/(0.3479+0.2412)
+bc_plot = ggpubr::ggarrange(BC_DNA, Sor_DNA, common.legend = T, legend = "right", labels = c("b)", "c)"), 
+                            widths = c(DNAw, 1-DNAw))
+ggpubr::ggarrange(comp_plot, bc_plot, nrow = 2, labels = c("a)", ""),  heights  = c(1/3, 2/3))
+ggsave(filename = paste0(filepath_figures, "Figure6_beta-diversity.pdf"), height = 200, width = 180, units = "mm")
+```
+
+## All treatments 
+```{r}
+plot_DF = distance_df_both_plot1 %>% 
+  filter(DPI_A == DPI_B, Added_Fc7_A == Added_Fc7_B, DPI_A != 0) %>% 
+  mutate(comp = case_when(Treatment_A == Treatment_B~ "a_within_treatment", T~"between"), 
+          pp = substr(Added_Fc7_A, 1, 1)   ) %>% 
+  mutate(pp = factor(pp, levels = c("N", "L", "H")))
+```
+
+```{r}
+comp_color = c("#A4B9EB","#D1EBA5", "#009E73", "#EB9D8D", "#D55E00", "#F0E442")
+plot_DF %>%  
+  ggplot2::ggplot(aes(x = treatment_comp, y = Similarity,
+                      fill = treatment_comp)) + 
+  my.theme +   
+  theme(panel.spacing.x = unit(0, "lines")) + 
+  guides(fill = guide_legend(override.aes = list(size = 3)), 
+         shape = guide_legend(override.aes = list(size = 3))) + 
+  ggh4x::facet_nested(indice~comp + DPI_A+ pp, scales = "free_x", switch = "both") +
+  
+  theme(plot.background  = element_rect(fill = "white",colour = NA), 
+        axis.text.x = element_blank(), 
+        axis.ticks.x = element_blank(), axis.title.x = element_blank(), 
+        legend.position = "right",
+        strip.placement.y = "outside",
+        strip.background.y = element_rect(color="transparent", fill="transparent", linetype="solid", size = 1)) +  #c(top, right, bottom, left)) + 
+  geom_point(size = 1, position = position_dodge(width = 1), shape = 21) + 
+  stat_summary(fun.data = conf3, 
+               position = position_dodge(width = 1),
+               color = "black", 
+               aes(fill = treatment_comp), 
+               geom = "boxplot", 
+               alpha = 0.9, 
+               show.legend = F) +
+  
+  scale_fill_manual("Treatment comparison", values = comp_color)
+```
+```{r}
+ggsave(filename = paste0(filepath_figures, "similarity_allcomparisons.pdf"), height = 100, width = 200, units = "mm")
+```
+
+
+#### check up 
+## Average Bray Curtis values 
+```{r}
+distance_df_both_plot1_BC = distance_df_both_plot1 %>% dplyr::filter(indice == "Bray-Curtis")
+plot_DF = distance_df_both_plot1_BC %>% 
+  filter(DPI_A == DPI_B, Added_Fc7_A == Added_Fc7_B, DPI_A != 0, Extraction_A == Extraction_B) %>% 
+ # filter(treatment_comp %in% c("N_P", "N_AB") ) %>%
+  mutate(comp = case_when(Treatment_A == Treatment_B~ "a_within_treatment", T~"between"))  
+plot_DF %>% 
+  dplyr::filter(day_comp == "1_1") %>% 
+  dplyr::group_by(comp, day_comp, pp_comp, treatment_comp) %>% 
+  dplyr::summarise(meanBC = round(mean(Similarity), 2), 
+                   sdBC = round(sd(Similarity),3))
+
+plot_DF %>% 
+  dplyr::filter(day_comp == "1_1", comp == "between") %>% 
+  dplyr::group_by(comp, day_comp, treatment_comp, Extraction_B, pp_comp) %>% 
+  dplyr::summarise(meanBC = round(mean(Similarity), 2), 
+                   sdBC = round(sd(Similarity),3))
+
+plot_DF %>% 
+  dplyr::filter(day_comp == "7_7", comp == "between", Extraction_B == "DNA") %>% 
+  dplyr::group_by(comp, day_comp, treatment_comp, Extraction_B, pp_comp) %>% 
+  dplyr::summarise(meanBC = round(mean(Similarity), 2), 
+                   sdBC = round(sd(Similarity),3))
+
+plot_DF %>% 
+  dplyr::filter(day_comp == "1_1", comp == "between", Extraction_B == "DNA") %>% 
+  dplyr::group_by(comp, day_comp, treatment_comp, Extraction_B, pp_comp) %>% 
+  dplyr::summarise(meanBC = round(mean(Similarity), 2), 
+                   sdBC = round(sd(Similarity),3))
+
+plot_DF %>% 
+  dplyr::filter(day_comp == "7_7", comp == "between", Extraction_B == "DNA") %>% 
+  dplyr::group_by(comp, day_comp, treatment_comp, Extraction_B,) %>% 
+  dplyr::summarise(meanBC = round(mean(Similarity), 2), 
+                   sdBC = round(sd(Similarity),3))
+
+plot_DF %>% 
+  dplyr::filter(day_comp == "1_1", comp == "between", Extraction_B == "DNA") %>% 
+  dplyr::group_by(comp, day_comp, treatment_comp, Extraction_B) %>% 
+  dplyr::summarise(meanBC = round(mean(Similarity), 2), 
+                   sdBC = round(sd(Similarity),3))
+```
+
+
+```{r}
+distance_df_both_plot1_BC = distance_df_both_plot1 %>% dplyr::filter(indice == "Sørensen")
+plot_DF = distance_df_both_plot1_BC %>% 
+  filter(DPI_A == DPI_B, Added_Fc7_A == Added_Fc7_B, DPI_A != 0, Extraction_A == Extraction_B) %>% 
+ # filter(treatment_comp %in% c("N_P", "N_AB") ) %>%
+  mutate(comp = case_when(Treatment_A == Treatment_B~ "a_within_treatment", T~"between"))  
+
+plot_DF %>% 
+  dplyr::filter(day_comp == "1_1") %>% 
+  dplyr::group_by(comp, day_comp, pp_comp, treatment_comp) %>% 
+  dplyr::summarise(meanBC = round(mean(Similarity), 2), 
+                   sdBC = round(sd(Similarity),3))
+
+plot_DF %>% 
+  dplyr::filter(day_comp == "1_1", comp == "between") %>% 
+  dplyr::group_by(comp, day_comp, treatment_comp, Extraction_B, pp_comp) %>% 
+  dplyr::summarise(meanBC = round(mean(Similarity), 2), 
+                   sdBC = round(sd(Similarity),3))
+
+plot_DF %>% 
+  dplyr::filter(day_comp == "7_7", comp == "between", Extraction_B == "DNA") %>% 
+  dplyr::group_by(comp, day_comp, treatment_comp, Extraction_B, pp_comp) %>% 
+  dplyr::summarise(meanBC = round(mean(Similarity), 2), 
+                   sdBC = round(sd(Similarity),3))
+
+plot_DF %>% 
+  dplyr::filter(day_comp == "1_1", comp == "between", Extraction_B == "DNA") %>% 
+  dplyr::group_by(comp, day_comp, treatment_comp, Extraction_B, pp_comp) %>% 
+  dplyr::summarise(meanBC = round(mean(Similarity), 2), 
+                   sdBC = round(sd(Similarity),3))
+
+plot_DF %>% 
+  dplyr::filter(day_comp == "7_7", comp == "between", Extraction_B == "DNA") %>% 
+  dplyr::group_by(comp, day_comp, treatment_comp, Extraction_B,) %>% 
+  dplyr::summarise(meanBC = round(mean(Similarity), 2), 
+                   sdBC = round(sd(Similarity),3))
+
+plot_DF %>% 
+  dplyr::filter(day_comp == "1_1", comp == "between", Extraction_B == "DNA") %>% 
+  dplyr::group_by(comp, day_comp, treatment_comp, Extraction_B) %>% 
+  dplyr::summarise(meanBC = round(mean(Similarity), 2), 
+                   sdBC = round(sd(Similarity),3))
+```

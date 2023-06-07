@@ -1,0 +1,111 @@
+---
+title: "Analysis of live-, dying- and dead bacterial density"
+---
+
+```{r, message=F, echo=F}
+library(dplyr)
+library(ggplot2)
+SessionInfo()
+filepath = "C:/Users/madel/OneDrive - NTNU/Doktorgrad/Project 8 Phage therapy and AB in semi-cont/R-analysis/GitHubScripts"
+filepath_results = paste0(filepath, "/results/", Sys.Date(), "_")
+filepath_figures = paste0(filepath, "/figures/",  Sys.Date(), "_")
+source(paste0(filepath, "/plot.settings_waterphage.R"))
+```
+
+# Import raw data and clean up dataframe
+```{r}
+sample_data = read.csv2(paste0(filepath, "/rawdata/Live_dead_estimation_2022-07-22.csv"), sep = ",")
+```
+
+```{r}
+# add metadata from sample info 
+sample_data.1 = sample_data %>% tidyr::separate(col = Sample,
+                                 into = c("Ex_Group", "Day", "delete", "Dilution"), 
+                                 sep = "_", remove = F) %>% 
+  mutate(pp = substr(Group, 1,1), 
+         treatment = substr(Group, 2,2))
+#clean up sample data
+sample_data.2 = sample_data.1 %>% 
+  select(-Plate, -Ex_Group, -delete, -Experiment, -Workspace, -Autogate.Status, -Compensation.Source) %>% 
+  filter(Plot.Title != "N/A")
+
+#check that all samples are equal 
+check1 = sample_data.2 %>% group_by(Sample) %>% summarise(n =n())
+#all samples have 7 datapoints
+```
+
+```{r}
+#select columns to work with 
+sample_data.3 = sample_data.2 %>% 
+  mutate(Concentration = as.double(Concentration), 
+         Dilution = as.double(Dilution)) %>% 
+  mutate(density_cells_mL = Concentration*Dilution*1000)
+
+sample_data.4 = sample_data.3 %>% 
+  filter(Plot.Title == "gate_plot") %>%
+  filter(Gate != "no_coin") %>% 
+  mutate(Gate = case_when(Gate == "R1" ~ "dead", 
+                          Gate == "R2" ~ "living", 
+                          Gate == "R3" ~ "dying", T~ Gate)) %>%
+  mutate(Days_fac = factor(Day, levels = c("0","1","2","3","4","5","6","7")))
+
+check2 = sample_data.4 %>% group_by(Sample) %>% summarise(n = n()) 
+#every sample represented by three gates
+```
+
+```{r}
+#export whole dataframe
+write.csv(sample_data.4, 
+          file = paste0(filepath, "data/2022-07-22_live_dead_clean.csv"))
+```
+
+# Live density 
+```{r}
+flow_data = flow_data %>% 
+  mutate(DPI = Day, 
+         Added_Fc7 = case_when(pp == "C" ~ "no", pp == "T" ~ "low", pp == "H" ~ "high"), 
+         Treatment = case_when(treatment == "N" ~ "None", treatment == "P" ~ "Phage", treatment == "A" ~ "AB") ) %>% 
+  mutate(Added_Fc7 = factor(Added_Fc7, levels = c("no", "low", "high" )), 
+                                 Treatment = factor(Treatment, levels = c("None", "Phage", "AB")) , 
+                                 treatment = factor(T, levels = c("C", "P", "A")) )  
+```
+
+
+```{r}
+flow_data %>%
+  filter(Gate == "living") %>% 
+  ggplot2::ggplot(aes(x  = DPI, y = density_cells_mL, fill = Treatment, color = Treatment)) + 
+    geom_smooth(se = F, size = 2) + 
+  geom_point(shape = 21, size = 4, color ="black") + 
+  facet_wrap( ~ Added_Fc7, scales = "free") + 
+  my.theme + 
+  scale_y_continuous(#trans = "log10" , 
+                     labels = scales::unit_format(unit = "e+06", scale = 1 / 1e+06, digits = 2)) + 
+  scale_fill_manual(values = treatment_cols1) + 
+  scale_color_manual(values = treatment_cols1) + 
+  ggtitle("Live cell density")
+ 
+ggsave(filename = paste0(filepath_figures, "density_live.png"), height = 3)
+```
+
+```{r}
+flow_data %>%
+  filter(Gate == "living") %>% 
+  mutate(X.Gated = as.numeric(X.Gated)) %>% 
+  ggplot2::ggplot(aes(x  = DPI, y = X.Gated, fill = Treatment, color = Treatment)) + 
+    geom_smooth(se = F, size = 2) + 
+  geom_point(shape = 21, size = 4, color ="black") + 
+  facet_wrap( ~ Added_Fc7) + 
+  my.theme + 
+  scale_fill_manual(values = treatment_cols1) + 
+  scale_color_manual(values = treatment_cols1) + 
+  ggtitle("Percent live population replicate 3") + 
+  ylab("Percent living")
+
+ggsave(filename = paste0(filepath_figures, "percent_living_rep3.png"), height = 3)
+```
+
+
+
+
+
