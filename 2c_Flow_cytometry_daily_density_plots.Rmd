@@ -18,22 +18,22 @@ bacterial_density = flow_density %>%
   filter(Gate == "Bacteria") %>%
   dplyr::mutate(Treatment = dplyr::case_when(Treatment == "none" ~ "None", 
                                              TRUE ~ Treatment)) %>%
-  dplyr::mutate(Added_Fc7 = case_when(Added_Fc7 == "no" ~ "No-Fc7", 
-                                      Added_Fc7 == "low" ~ "Low-Fc7", 
-                                      Added_Fc7 == "high" ~ "High-Fc7")) %>%
-  dplyr::mutate(Added_Fc7 = factor(Added_Fc7, levels = c("No-Fc7", "Low-Fc7", "High-Fc7" )), 
+  dplyr::mutate(Added_Fc7 = case_when(Added_Fc7 == "no" ~ "No Fc7", 
+                                      Added_Fc7 == "low" ~ "Low Fc7", 
+                                      Added_Fc7 == "high" ~ "High Fc7")) %>%
+  dplyr::mutate(Added_Fc7 = factor(Added_Fc7, levels = c("No Fc7", "Low Fc7", "High Fc7" )), 
                 Treatment = factor(Treatment, levels = c("None", "Phage", "AB")) , 
                 T = factor(T, levels = c("C", "P", "A")) ) 
   
 #marginal mean estimates
-flow_model_estimate = readRDS(paste0(filepath, "/results/2022-12-31_density_estimate_plot.RDS"))
+flow_model_estimate = readRDS(paste0(filepath, "/results/2023-10-30_lmer_density_estimate_plot.RDS"))
 flow_model_estimate = flow_model_estimate %>% mutate(Treatment = as.character(Treatment)) %>%
   dplyr::mutate(Treatment = dplyr::case_when(Treatment == "none" ~ "None", TRUE ~ Treatment)) %>%
-  dplyr::mutate(Added_Fc7 = case_when(Added_Fc7 == "no" ~ "No-Fc7", 
-                                      Added_Fc7 == "low" ~ "Low-Fc7", 
-                                      Added_Fc7 == "high" ~ "High-Fc7")) %>%
+  dplyr::mutate(Added_Fc7 = case_when(Added_Fc7 == "no" ~ "No Fc7", 
+                                      Added_Fc7 == "low" ~ "Low Fc7", 
+                                      Added_Fc7 == "high" ~ "High Fc7")) %>%
   mutate(Treatment = factor(Treatment, levels = c("None", "Phage", "AB")) , 
-         Added_Fc7 = factor(Added_Fc7, levels = c("No-Fc7", "Low-Fc7", "High-Fc7" ))) 
+         Added_Fc7 = factor(Added_Fc7, levels = c("No Fc7", "Low Fc7", "High Fc7" ))) 
   
 ```
 
@@ -54,7 +54,7 @@ density =
              color = "black", size = 2) + 
   scale_y_continuous( trans = "log10",breaks = c(300000, 500000, 700000, 1000000, 1500000),  
                      labels = scales::unit_format(unit = "", scale = 1 / 1e+06, digits = 2)) + 
-  labs(y = expression(paste("Bacterial density (", 10^6, "cells/mL)")))
+  labs(y = expression(paste("Bacterial density (", 10^6, "cells/mL)")), x = "Day")
 ```
 
 ## Day 7 - final sampling day 
@@ -89,7 +89,7 @@ my.theme +
 ## Combined plot
 ```{r}
 ggpubr::ggarrange(density, d7_plot, common.legend = T, legend = "right", widths = c(1.5,1), labels = c("a)", "b)"))
-ggplot2::ggsave(filename = paste0(filepath_figures, "figure3_density_plot.svg"), width = 180, height = 70, units = "mm")
+ggplot2::ggsave(filename = paste0(filepath, "/2023-10-30_figure3_density_plot.svg"), width = 180, height = 70, units = "mm")
 ```
 
 
@@ -104,10 +104,22 @@ bacterial_density %>%
 #38.90439 % increase in density
 904367.6-651072.0	
 
+(358694.0-453787.5)/453787.5*100
+```
+
+
+```{r}
 bacterial_density  %>% 
   filter(PP == "H") %>% 
   group_by(Group, DPI) %>% 
-  summarise(mean = mean(density_cells_mL)) %>% View()
+  summarise(mean = mean(density_cells_mL)) 
+
+bacterial_density %>%
+  filter(DPI == 1, Added_Fc7 == "High Fc7") %>% 
+  group_by(Group) %>% 
+  summarise(mean = mean(density_cells_mL))
+
+((915051.2-1938577.6))/1938577.6*100
 ```
 
 

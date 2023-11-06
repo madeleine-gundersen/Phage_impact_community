@@ -201,8 +201,20 @@ plot_DF %>%
                    sdBC = round(sd(Similarity),3))
 
 plot_DF %>% 
+  dplyr::filter(day_comp == "1_1", comp == "between") %>% 
+  dplyr::group_by(comp, day_comp, treatment_comp, Extraction_B) %>% 
+  dplyr::summarise(meanBC = round(mean(Similarity), 2), 
+                   sdBC = round(sd(Similarity),3))
+
+plot_DF %>% 
   dplyr::filter(day_comp == "7_7", comp == "between", Extraction_B == "DNA") %>% 
   dplyr::group_by(comp, day_comp, treatment_comp, Extraction_B, pp_comp) %>% 
+  dplyr::summarise(meanBC = round(mean(Similarity), 2), 
+                   sdBC = round(sd(Similarity),3))
+
+plot_DF %>% 
+  dplyr::filter(day_comp == "7_7", comp == "between", Extraction_B == "DNA") %>% 
+  dplyr::group_by(comp, day_comp, treatment_comp, Extraction_B) %>% 
   dplyr::summarise(meanBC = round(mean(Similarity), 2), 
                    sdBC = round(sd(Similarity),3))
 

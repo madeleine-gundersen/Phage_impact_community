@@ -4,10 +4,11 @@ title: "Alpha diversity lm models"
 
 #Package and load data
 ```{r}
-library(phyloseq)
+#library(phyloseq)
 library(ggplot2)
 library(dplyr)
 library(emmeans)
+library(lme4)
 ```
 
 ```{r}
@@ -28,24 +29,25 @@ alpha_div = data.frame(sample_data(normalised),
   mutate(eveness = order1/richness)
 #do not include jonsvatne (lake water) samples in modelling 
 alpha_div_nj = alpha_div%>% 
-  dplyr::filter(Sample_name != "JW-1-D-0", Sample_name != "JW-2-D-0")
+  dplyr::filter(Sample_name != "JW-1-D-0", Sample_name != "JW-2-D-0") %>%
+  dplyr::mutate(Sampling_unit = paste0(PP, T, Rep))
 ```
 
 ```{r}
 set.seed(3003)
-model_DNA = lm(formula = richness ~ 
-                 poly(DPI, degree = 2) *Treatment * Added_Fc7,
-               data = alpha_div_nj %>% dplyr::filter(Extraction == "DNA")) #model for DNA and RNA seperatly
+model_DNA = lme4::lmer(formula = richness ~ poly(DPI, degree = 2) * Treatment * Added_Fc7 + (DPI|Sampling_unit), data = alpha_div_nj)
+
 lm.summary <- summary(model_DNA)
 report = data.frame(Coefficient = rownames(lm.summary$coefficients), 
            Estimate = paste0( format( round(lm.summary$coefficients[,1],1), nsmall = 1 ),  "±", 
                                format( round(lm.summary$coefficients[,2],1), nsmall = 1 ) ), 
-           t = format( round(lm.summary$coefficients[,3],1), nsmall = 1 ), 
-           p = lm.summary$coefficients[,4])  
+           t = format( round(lm.summary$coefficients[,3],1), nsmall = 1 ))  
 
 rownames(report) = NULL
 #clipr::write_clip(anova(model_DNA)) #copy to excel table
 clipr::write_clip(report) #copy to excel table
+MuMIn::r.squaredGLMM(model_DNA)
+round(0.7961589,2)
 ```
 
 #Investigate models
@@ -54,7 +56,7 @@ p_DNA = emmip(object = model_DNA, formula = Treatment ~ DPI|Added_Fc7,  at = lis
           CIs = T, plotit = F) # which is the same as the inraction term
 
 alpha_with_estimate = p_DNA%>%  data.frame() %>% rename(richness = yvar)
-saveRDS(object = alpha_with_estimate, file = paste0(filepath_results, "2023-02-03_16SrDNA_ASVrichness_emmip_estimates.RDS"))
+saveRDS(object = alpha_with_estimate, file = paste0(filepath_results, "16SrDNA_ASVrichness_emmip_estimates.RDS"))
 ```
 
 # Richness model 
@@ -65,7 +67,10 @@ DNA_each_day = emmeans(object = model_DNA,  type = "response", adjust = "dunnett
 estimates_day = DNA_each_day$contrasts %>%#get confidence intervals and p value per day
   summary(infer = TRUE, digits = 1) %>% 
   arrange(contrast) %>% 
-  data.frame() 
+  data.frame() %>%
+    mutate(across(estimate:t.ratio, round, 2)) %>%
+  mutate(p.value = case_when(p.value>0.1 ~round(p.value,2), 
+                             TRUE ~ round(p.value, 4)))
 
 clipr::write_clip(estimates_day) 
 ```

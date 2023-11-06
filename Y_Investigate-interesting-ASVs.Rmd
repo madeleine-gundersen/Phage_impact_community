@@ -4,17 +4,12 @@ title: "Investigate ASVs"
 
 # Investigate ASVs
 ```{r}
-normalised_1 =normalised
-t = as.data.frame(tax_table(normalised_1))
-t$ASV = rownames(t)
-t1 = phyloseq::tax_table(t)
-rownames(t1) = t1@.Data[,"ta7"]
-colnames(t1) = c(colnames(tax_table(normalised)), "ASV")
-tax_table(normalised_1) = t1
+d7 = readRDS(file = paste0(filepath, "/results/2023-02-14_Phyloseq_absolute_abundance_16SrDNA_7DPI-filtered-1508ASVs.RDS"))
 
+normalised_1 =d7
+normalised = d7
+library(microshades)
 mdf_prep <- prep_mdf(normalised_1, subgroup_level = "ASV")
-
-
 ```
 ```{r}
 #Cytophagaceae
@@ -24,7 +19,7 @@ cyto = mdf_prep %>% filter(Family == "f_Cytophagaceae") %>%
   summarise(n = n(), max = max(Abundance)*100) %>% arrange(desc(max))
 
 cyto_keep = cyto %>% filter(max > 1)
-
+library(ggh4x)
 mdf_prep %>% filter(ASV %in% cyto_keep$OTU ) %>% 
   ggplot(aes(x = Sample_name, y =Abundance , fill = OTU, color = OTU)) + 
   geom_bar(stat = "identity") + 
@@ -93,6 +88,24 @@ ASV17 = d7_prep %>% filter(Order == "o_Cytophagales", ASV == "Zotu17" )
 cyto  = d7_prep %>% filter(Order == "o_Cytophagales") %>% group_by(Sample, Order) %>% summarise(tot_Cyt = sum(Abundance))
 
 left_join(cyto, ASV17) %>% mutate(per_asv17 = Abundance*100/tot_Cyt) %>% select(per_asv17) %>% ungroup() %>% na.omit() %>% summarise(mean = mean(per_asv17))
+```
+
+
+```{r}
+scientific_not <- function(x, na.rm = FALSE) (format(x, scientific = TRUE))
+d7 %>% 
+  otu_table() %>% 
+  as.data.frame() %>%
+  mutate(ASV = rownames(.)) %>%
+  pivot_longer(-ASV, names_to = "Sequence_name") %>%
+  filter(ASV == "Zotu17") %>%
+  left_join(., d7 %>% sample_data(.) %>% data.frame(), by = join_by(Sequence_name)) %>%
+  
+  group_by(Added_Fc7, Treatment) %>%
+  summarise(mean_ab = mean(value), 
+            n = n(),
+            sd = sd(value)) %>%
+  mutate_if(is.numeric, scientific_not)
 ```
 ```{r}
 ASV_DNA  = phyloseq::subset_samples(normalised, Extraction == "DNA")

@@ -254,3 +254,45 @@ pairwise.wilcox.test(df_high$Absolute_abundance, df_high$Treatment, p.adjust.met
 ```
 
 
+# Aquirufa
+```{r}
+ASV17 = mdf_norm_both %>% filter(OTU == "Zotu17") %>% 
+  dplyr::mutate(density = case_when(type == "Absolute_abundance" ~ density_cells_mL)) %>%
+    dplyr::mutate(Added_Fc7 = case_when(Added_Fc7 == "No" ~ "No-Fc7", 
+                                      Added_Fc7 == "Low" ~ "Low-Fc7", 
+                                      Added_Fc7 == "High" ~ "High-Fc7")) %>%
+  mutate(Added_Fc7 = factor(Added_Fc7, levels = c("No-Fc7", "Low-Fc7", "High-Fc7" ))) 
+scientific_not <- function(x, na.rm = FALSE) (format(x, scientific = TRUE))
+ASV17 %>%
+  filter(type == "Absolute_abundance", DPI == 7) %>%
+  group_by(Added_Fc7, Treatment) %>%
+    summarise(mean_ab = mean(Abundance), 
+            n = n(),
+            sd = sd(Abundance)) #%>%
+  mutate_if(is.numeric, scientific_not)
+120787.8/530.2
+```
+
+#Plot
+```{r}
+ASV17 %>%
+  filter(type == "Absolute_abundance") %>%
+  ggplot(aes(x = Sample_name, y = Abundance)) + 
+  geom_bar(stat = "identity", fill = "grey88", color = "black") + 
+  #scale_y_continuous(labels = scales::unit_format(unit = "", scale = 1 / 1e+06, digits = 2)) +
+  my.theme + 
+  theme(legend.position = "none",
+        text=element_text(size=10), 
+        axis.text.x = element_blank() , 
+        axis.ticks.x = element_blank(), 
+        axis.title.x = element_blank(), 
+        strip.text= element_text(size = 8),
+        panel.spacing.x = unit(0, "lines"), 
+        panel.grid.major.x = element_blank()
+        ) + 
+  ggh4x::facet_nested(~ Added_Fc7+DPI+Treatment, 
+                      scales = "free", space = "free_x", switch = "both") + 
+  coord_cartesian(expand = FALSE) +
+  labs(y = expression(paste("Fc7 absolute abundance")))
+```
+

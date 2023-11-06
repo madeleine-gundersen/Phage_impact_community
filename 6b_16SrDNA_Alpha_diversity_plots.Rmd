@@ -26,24 +26,24 @@ alpha_div = data.frame(sample_data(normalised),
                         order1 = vegan::renyi(t(as.data.frame(normalised@otu_table)), scales = c(1), hill = TRUE),
                         order2 = vegan::renyi(t(as.data.frame(normalised@otu_table)), scales = c(2), hill = TRUE)) %>%
   mutate(eveness = order1/richness) %>% 
-  dplyr::mutate(Added_Fc7 = case_when(Added_Fc7 == "No" ~ "No-Fc7", 
-                                      Added_Fc7 == "Low" ~ "Low-Fc7", 
-                                      Added_Fc7 == "High" ~ "High-Fc7")) %>%
-  mutate(Added_Fc7 = factor(Added_Fc7, levels = c("No-Fc7", "Low-Fc7", "High-Fc7" ))) 
+  dplyr::mutate(Added_Fc7 = case_when(Added_Fc7 == "No" ~ "No Fc7", 
+                                      Added_Fc7 == "Low" ~ "Low Fc7", 
+                                      Added_Fc7 == "High" ~ "High Fc7")) %>%
+  mutate(Added_Fc7 = factor(Added_Fc7, levels = c("No Fc7", "Low Fc7", "High Fc7" ))) 
 
-alpha_df_estimates = readRDS(file = paste0(filepath, "/results/2023-02-03_16SrDNA_ASVrichness_emmip_estimates.RDS"))
+alpha_df_estimates = readRDS(file = paste0(filepath, "/results/2023-10-30_16SrDNA_ASVrichness_emmip_estimates.RDS"))
 alpha_df_estimates = alpha_df_estimates %>%  
-  dplyr::mutate(Added_Fc7 = case_when(Added_Fc7 == "No" ~ "No-Fc7", 
-                                      Added_Fc7 == "Low" ~ "Low-Fc7", 
-                                      Added_Fc7 == "High" ~ "High-Fc7")) %>%
-  mutate(Added_Fc7 = factor(Added_Fc7, levels = c("No-Fc7", "Low-Fc7", "High-Fc7" ))) 
+  dplyr::mutate(Added_Fc7 = case_when(Added_Fc7 == "No" ~ "No Fc7", 
+                                      Added_Fc7 == "Low" ~ "Low Fc7", 
+                                      Added_Fc7 == "High" ~ "High Fc7")) %>%
+  mutate(Added_Fc7 = factor(Added_Fc7, levels = c("No Fc7", "Low Fc7", "High Fc7" ))) 
 ```
 
 # Calculations
 ## D7 richness
 ```{r}
 alpha_div %>% 
-  dplyr::filter(DPI == 7) %>% 
+  dplyr::filter(DPI == 7, Added_Fc7 == "High Fc7") %>% 
   group_by(Treatment, Added_Fc7) %>% 
   dplyr::summarise(n=n(), av_ri =mean(richness), sd = sd(richness) ) %>%
   dplyr::filter(Treatment != "Phage")
@@ -58,10 +58,13 @@ alpha_div %>%
 
 ```{r}
 alpha_div %>% 
-  dplyr::filter(DPI == 3, Added_Fc7 == "High") %>% 
+  dplyr::filter(DPI == 3, Added_Fc7 == "High Fc7") %>% 
   group_by(Treatment, Added_Fc7) %>% 
   dplyr::summarise(n=n(), av_ri =mean(richness), sd = sd(richness) ) 
+
+
 1270.8/1132.4 #1.122218
+(1270.8-1132.4)/1132.4 * 100
 ```
 
 # Plots 
@@ -77,9 +80,10 @@ alpha_df_estimates %>%
   facet_grid(~Added_Fc7, scales = "free_y") +
   geom_point(data = alpha_div, aes(x=DPI, y = richness , fill = Treatment,  shape = Treatment) , 
              color = "black", size = 3)  + 
-  ylab("ASV richness")
+  ylab("ASV richness") + 
+  xlab("Day")
 
-ggsave(filename = paste0(filepath_figures, "Figure4_16SrDNA_ASV_richness.svg"), width = 180, height = 80, units = "mm")
+ggsave(filename = paste0(filepath, "/2023-10-30_Figure4_16SrDNA_ASV_richness.svg"), width = 180, height = 80, units = "mm")
 ```
 
 # Supplementary figure dept + diversity each group

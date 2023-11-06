@@ -190,24 +190,10 @@ rep_sim_DNA.2_sor = rep_sim_DNA_sor %>%
 
 #Model replicate similarity change 
 ## lmer
-the variance explained by the microcosm comparison has lower variance than the residuals. Therefore switchin to a unmixed linear model
 ```{r}
-# rep_sim_DNA
-# linear = lmerTest::lmer(formula = BrayCurtis_sim ~ DPI * Treatment * Added_Fc7 +
-#                           (1 + DPI| Rep_comp:Treatment), #random effect; each microcosm hasa different intercept and varying slopes
-#             data = rep_sim_DNA.2_bray)
-# summary(linear)
-# anova(linear)
-# hist(resid(linear))
-```
-
-## lm
-the variance explained by the microcosm comparison has lower variance than the residuals. Therefore switchin to a linear model
-```{r}
-set.seed(3003)
-linear_DNA_bray = lm(formula = BrayCurtis_sim ~ DPI * Treatment * Added_Fc7, 
+linear_DNA_bray = lme4::lmer(formula = BrayCurtis_sim ~ DPI * Treatment * Added_Fc7 +
+                          (DPI| Rep_comp:Treatment), #random effect; each microcosm hasa different intercept and varying slopes
             data = rep_sim_DNA.2_bray)
-
 summary(linear_DNA_bray)
 anova(linear_DNA_bray)
 hist(resid(linear_DNA_bray))
@@ -216,11 +202,14 @@ hist(resid(linear_DNA_bray))
 ```{r}
 set.seed(3003)
 model_DNA_bray = linear_DNA_bray
-coeffs = coefficients(model_DNA_bray) %>% data.frame() %>% rename(Estimate = ".")
+coeffs = coefficients(summary(linear_DNA_bray))  %>% data.frame() %>% rename(Std_Error = "Std..Error")
 coeffs$Coefficients = rownames(coeffs)
 conf_int = confint(model_DNA_bray) %>% data.frame() %>% rename(Lower = "X2.5..", Upper = "X97.5..")
 conf_int$Coefficients = rownames(conf_int)
+```
 
+
+```{r}
 rates_DNA_Bray = data.frame(group = c("No_None", "No_Phage", "No_AB", 
                      "Low_None", "Low_Phage", "Low_AB", 
                      "High_None", "High_Phage", "High_AB"), 
@@ -303,10 +292,9 @@ rates_DNA_Bray = data.frame(group = c("No_None", "No_Phage", "No_AB",
 
 #Sørensen model 
 ## lm
-the variance explained by the microcosm comparison has lower variance than the residuals. Therefore switchin to a linear model
 ```{r}
 set.seed(3003)
-linear_DNA_sor = lm(formula = Sorensen_sim ~ DPI * Treatment * Added_Fc7, 
+linear_DNA_sor = lme4::lmer(formula = Sorensen_sim ~ DPI * Treatment * Added_Fc7 + (DPI| Rep_comp:Treatment), 
             data = rep_sim_DNA.2_sor)
 
 summary(linear_DNA_sor)
@@ -317,11 +305,14 @@ hist(resid(linear_DNA_sor))
 ```{r}
 set.seed(3003)
 model_DNA_sor = linear_DNA_sor
-coeffs = coefficients(model_DNA_sor) %>% data.frame() %>% rename(Estimate = ".")
+coeffs = coefficients(summary(model_DNA_sor)) %>% data.frame()%>% rename(Std_Error = "Std..Error")
 coeffs$Coefficients = rownames(coeffs)
 conf_int = confint(model_DNA_sor) %>% data.frame() %>% rename(Lower = "X2.5..", Upper = "X97.5..")
 conf_int$Coefficients = rownames(conf_int)
+```
 
+
+```{r}
 rates_DNA_sor = data.frame(group = c("No_None", "No_Phage", "No_AB", 
                      "Low_None", "Low_Phage", "Low_AB", 
                      "High_None", "High_Phage", "High_AB"), 
@@ -408,10 +399,10 @@ rates_DNA_sor$distance = "Sørensen"
 rates = bind_rows(rates_DNA_Bray, rates_DNA_sor) %>% 
   tidyr::separate(group, sep = "_", into = c("Added_Fc7", "Treatment")) %>% 
   mutate(Added_Fc7 = factor(Added_Fc7, levels = c("No", "Low", "High")), 
-         Added_Fc7 = case_when(Added_Fc7 == "No" ~ "No-Fc7", 
-                                      Added_Fc7 == "Low" ~ "Low-Fc7", 
-                                      Added_Fc7 == "High" ~ "High-Fc7") )  %>%
-  mutate(Added_Fc7 = factor(Added_Fc7, levels = c("No-Fc7", "Low-Fc7", "High-Fc7" )), 
+         Added_Fc7 = case_when(Added_Fc7 == "No" ~ "No Fc7", 
+                                      Added_Fc7 == "Low" ~ "Low Fc7", 
+                                      Added_Fc7 == "High" ~ "High Fc7") )  %>%
+  mutate(Added_Fc7 = factor(Added_Fc7, levels = c("No Fc7", "Low Fc7", "High Fc7" )), 
          Treatment = factor(Treatment, levels = c("None", "Phage", "AB" ))) 
 pd = position_dodge(0.5)
 rates %>%
@@ -428,29 +419,24 @@ rates %>%
   theme(axis.title.x = element_blank())
 
 
-ggsave(filename = paste0(filepath_figures, "Figure7_Replicate-similarity-rate.pdf"), width = 180, height = 60, units = "mm")
+ggsave(filename = paste0(filepath_figures, "Figure7_Replicate-similarity-rate.png"), width = 180, height = 60, units = "mm")
+
 clipr::write_clip(rates %>% mutate(rate = round(rate, 3)))
 ```
 
 ```{r}
 rates %>% 
-  tidyr::spread(value = rate, key = Treatment) %>% 
-  dplyr::mutate(phage_diff = none-Phage, ab_diff = none - AB) %>% 
-  dplyr::group_by(Added_Fc7) %>% 
-  dplyr::summarise(mean_p = round(mean(phage_diff),4), 
-                   mean_ab = round(mean(ab_diff),4))
-
-rates %>% select(distance, Extraction, Added_Fc7, Treatment, rate) %>% 
-  tidyr::spread(value = rate, key = Treatment) %>% 
-  dplyr::mutate(phage_diff = none-Phage, ab_diff = none - AB) %>% 
-  dplyr::group_by(Added_Fc7) %>% filter(Added_Fc7 == "no")
+  select(-Lower, -Upper) %>%
+  tidyr::pivot_wider(names_from = Treatment, values_from = rate) %>% 
+  dplyr::mutate(phage_diff = None-Phage, ab_diff = None - AB) %>% 
+  dplyr::group_by(distance, Added_Fc7) %>% 
   dplyr::summarise(mean_p = round(mean(phage_diff),4), 
                    mean_ab = round(mean(ab_diff),4))
   
-rates %>% select(distance, Extraction, Added_Fc7, Treatment, rate) %>% 
+rates %>% select(distance, Added_Fc7, Treatment, rate) %>% 
   tidyr::spread(value = rate, key = Treatment) %>% 
-  dplyr::group_by(distance, Extraction, Added_Fc7,  ) %>%
-  dplyr::summarise(mean_none= round(mean(none),3), 
+  dplyr::group_by(distance, Added_Fc7) %>%
+  dplyr::summarise(mean_none= round(mean(None),3), 
                    mean_p = round(mean(Phage),3), 
                    mean_ab = round(mean(AB),3))
 ```
